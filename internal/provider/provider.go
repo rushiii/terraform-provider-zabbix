@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"terraform-provider-zabbix/internal/zabbix"
+	"github.com/RuShIII/terraform-provider-zabbix/internal/zabbix"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/diag"

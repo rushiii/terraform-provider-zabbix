@@ -1,7 +1,7 @@
 terraform {
   required_providers {
     zabbix = {
-      source  = "local/zabbix"
+      source  = "RuShIII/terraform-provider-zabbix"
       version = "0.1.0"
     }
   }

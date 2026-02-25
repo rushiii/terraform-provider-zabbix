@@ -5,7 +5,7 @@ import (
 	"flag"
 	"log"
 
-	"terraform-provider-zabbix/internal/provider"
+	"github.com/RuShIII/terraform-provider-zabbix/internal/provider"
 
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
 )
@@ -18,7 +18,7 @@ func main() {
 	flag.Parse()
 
 	opts := providerserver.ServeOpts{
-		Address: "registry.terraform.io/local/zabbix",
+		Address: "registry.terraform.io/RuShIII/terraform-provider-zabbix",
 		Debug:   debug,
 	}
 
