@@ -18,7 +18,7 @@ func main() {
 	flag.Parse()
 
 	opts := providerserver.ServeOpts{
-		Address: "registry.terraform.io/rushiii/terraform-provider-zabbix",
+		Address: "registry.terraform.io/rushiii/zabbix",
 		Debug:   debug,
 	}
 

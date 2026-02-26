@@ -27,7 +27,7 @@ This provider currently does not expose any data sources.
 terraform {
   required_providers {
     zabbix = {
-      source  = "rushiii/terraform-provider-zabbix"
+      source  = "rushiii/zabbix"
       version = "0.1.1"
     }
   }

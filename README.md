@@ -50,7 +50,7 @@ Create a local Terraform CLI config (for dev override), then point Terraform/Ope
 ```hcl
 provider_installation {
   dev_overrides {
-    "registry.terraform.io/rushiii/terraform-provider-zabbix" = "/absolute/path/to/terraform-provider-zabbix/dist"
+    "registry.terraform.io/rushiii/zabbix" = "/absolute/path/to/terraform-provider-zabbix/dist"
   }
   direct {}
 }
@@ -62,6 +62,35 @@ Then run:
 TF_CLI_CONFIG_FILE=/absolute/path/to/.terraformrc.local terraform init -reconfigure
 terraform plan
 ```
+
+## Registry source address
+
+Use this source address in your Terraform/OpenTofu configuration:
+
+```hcl
+terraform {
+  required_providers {
+    zabbix = {
+      source  = "rushiii/zabbix"
+      version = "0.1.1"
+    }
+  }
+}
+```
+
+## Release assets required by OpenTofu/Terraform registries
+
+Each GitHub release tag (for example `v0.1.1`) must include:
+
+- `terraform-provider-zabbix_0.1.1_linux_amd64.zip`
+- `terraform-provider-zabbix_0.1.1_linux_arm64.zip`
+- `terraform-provider-zabbix_0.1.1_darwin_amd64.zip`
+- `terraform-provider-zabbix_0.1.1_darwin_arm64.zip`
+- `terraform-provider-zabbix_0.1.1_windows_amd64.zip`
+- `terraform-provider-zabbix_0.1.1_SHA256SUMS`
+
+This repository now includes a GoReleaser config and a GitHub Actions workflow to generate
+and upload these assets automatically when a version tag is pushed.
 
 ## Import examples
 
