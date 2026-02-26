@@ -237,15 +237,32 @@ func parseInt(v interface{}) int {
 	}
 }
 
+// parseString accepts JSON string or number for Zabbix API compatibility (e.g. port, status as number).
+func parseString(v interface{}) string {
+	if v == nil {
+		return ""
+	}
+	switch x := v.(type) {
+	case string:
+		return x
+	case float64:
+		return strconv.FormatFloat(x, 'f', -1, 64)
+	case int:
+		return strconv.Itoa(x)
+	default:
+		return ""
+	}
+}
+
 type hostInterfaceJSON struct {
-	InterfaceID string       `json:"interfaceid,omitempty"`
-	Type        interface{}  `json:"type"`
-	Main        interface{}  `json:"main"`
-	UseIP       interface{}  `json:"useip"`
-	IP          string       `json:"ip,omitempty"`
-	DNS         string       `json:"dns,omitempty"`
-	Port        string       `json:"port,omitempty"`
-	Details     *SNMPDetails `json:"details,omitempty"`
+	InterfaceID string          `json:"interfaceid,omitempty"`
+	Type        interface{}     `json:"type"`
+	Main        interface{}     `json:"main"`
+	UseIP       interface{}     `json:"useip"`
+	IP          string          `json:"ip,omitempty"`
+	DNS         string          `json:"dns,omitempty"`
+	Port        interface{}     `json:"port,omitempty"` // API can return number or string
+	Details     json.RawMessage `json:"details,omitempty"`
 }
 
 func (hi *HostInterface) UnmarshalJSON(data []byte) error {
@@ -259,8 +276,24 @@ func (hi *HostInterface) UnmarshalJSON(data []byte) error {
 	hi.UseIP = parseInt(raw.UseIP)
 	hi.IP = raw.IP
 	hi.DNS = raw.DNS
-	hi.Port = raw.Port
-	hi.Details = raw.Details
+	hi.Port = parseString(raw.Port)
+	hi.Details = parseSNMPDetails(raw.Details)
+	return nil
+}
+
+// parseSNMPDetails accepts details as JSON object or array (Zabbix API can return either).
+func parseSNMPDetails(data json.RawMessage) *SNMPDetails {
+	if len(data) == 0 {
+		return nil
+	}
+	var single SNMPDetails
+	if err := json.Unmarshal(data, &single); err == nil {
+		return &single
+	}
+	var arr []SNMPDetails
+	if err := json.Unmarshal(data, &arr); err == nil && len(arr) > 0 {
+		return &arr[0]
+	}
 	return nil
 }
 
@@ -292,6 +325,40 @@ type Host struct {
 		Name       string `json:"name"`
 	} `json:"parentTemplates"`
 	Tags []Tag `json:"tags"`
+}
+
+type hostJSON struct {
+	HostID   interface{} `json:"hostid"`   // API can return string or number
+	Host     string      `json:"host"`
+	Name     string      `json:"name"`
+	Status   interface{} `json:"status"`  // API can return "0"/"1" or 0/1
+	Interfaces []HostInterface `json:"interfaces"`
+	Groups   []struct {
+		GroupID string `json:"groupid"`
+		Name    string `json:"name"`
+	} `json:"groups"`
+	ParentTemplates []struct {
+		TemplateID string `json:"templateid"`
+		Host       string `json:"host"`
+		Name       string `json:"name"`
+	} `json:"parentTemplates"`
+	Tags []Tag `json:"tags"`
+}
+
+func (h *Host) UnmarshalJSON(data []byte) error {
+	var raw hostJSON
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	h.HostID = parseString(raw.HostID)
+	h.Host = raw.Host
+	h.Name = raw.Name
+	h.Status = parseString(raw.Status)
+	h.Interfaces = raw.Interfaces
+	h.Groups = raw.Groups
+	h.ParentTemplates = raw.ParentTemplates
+	h.Tags = raw.Tags
+	return nil
 }
 
 type HostCreateRequest struct {
