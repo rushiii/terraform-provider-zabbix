@@ -2,15 +2,15 @@
 page_title: "zabbix Provider"
 subcategory: ""
 description: |-
-  Provider OpenTofu/Terraform pour gerer des objets Zabbix via l'API JSON-RPC.
+  Terraform/OpenTofu provider for managing Zabbix objects via the JSON-RPC API.
 ---
 
 # zabbix Provider
 
-Le provider `zabbix` permet de gerer des ressources Zabbix (hosts, host groups, templates, triggers)
-depuis Terraform/OpenTofu.
+The `zabbix` provider lets you manage Zabbix resources (hosts, host groups, templates, triggers)
+from Terraform/OpenTofu.
 
-## Ressources supportees
+## Supported resources
 
 - `zabbix_host`
 - `zabbix_host_group`
@@ -19,7 +19,7 @@ depuis Terraform/OpenTofu.
 
 ## Data sources
 
-Ce provider ne publie actuellement aucun data source.
+This provider currently does not expose any data sources.
 
 ## Example Usage
 
@@ -27,7 +27,7 @@ Ce provider ne publie actuellement aucun data source.
 terraform {
   required_providers {
     zabbix = {
-      source  = "local/zabbix"
+      source  = "rushiii/terraform-provider-zabbix"
       version = "0.1.0"
     }
   }
@@ -39,7 +39,7 @@ provider "zabbix" {
 }
 ```
 
-Exemple avec authentification user/password:
+Example with username/password authentication:
 
 ```terraform
 provider "zabbix" {
@@ -53,26 +53,26 @@ provider "zabbix" {
 
 ### Required
 
-- `url` (String) URL de l'API Zabbix, par exemple `https://zabbix.example.com/api_jsonrpc.php`.
+- `url` (String) Zabbix API URL, for example `https://zabbix.example.com/api_jsonrpc.php`.
 
 ### Optional
 
-- `api_token` (String, Sensitive) Token API Zabbix. Prioritaire si defini.
-- `username` (String) Nom utilisateur Zabbix (utilise si `api_token` est absent).
-- `password` (String, Sensitive) Mot de passe Zabbix (utilise si `api_token` est absent).
-- `timeout_seconds` (Number) Timeout HTTP en secondes. Defaut: `30`.
-- `insecure_skip_tls` (Boolean) Ignore la validation TLS (utile en labo uniquement).
+- `api_token` (String, Sensitive) Zabbix API token. Takes priority if provided.
+- `username` (String) Zabbix username (used when `api_token` is not set).
+- `password` (String, Sensitive) Zabbix password (used when `api_token` is not set).
+- `timeout_seconds` (Number) HTTP timeout in seconds. Default: `30`.
+- `insecure_skip_tls` (Boolean) Skip TLS certificate validation (for lab/testing only).
 
-## Comportement d'authentification
+## Authentication behavior
 
-- Si `api_token` est renseigne, il est utilise en priorite.
-- Si `api_token` est vide, `username` et `password` sont obligatoires.
-- Si `api_token` et `username/password` sont donnes en meme temps, le token reste prioritaire.
+- If `api_token` is set, it is used first.
+- If `api_token` is empty, `username` and `password` are required.
+- If both `api_token` and `username/password` are set, the token still takes priority.
 
-## Validation au configure
+## Configure-time validation
 
-Au chargement du provider:
+During provider initialization:
 
-1. Le client HTTP/API est initialise.
-2. Un ping `apiinfo.version` est execute pour verifier l'accessibilite de l'API.
-3. En cas d'erreur, la planification/apply echoue immediatement.
+1. The HTTP/API client is initialized.
+2. An `apiinfo.version` ping is executed to verify API reachability.
+3. If the check fails, planning/apply fails immediately.

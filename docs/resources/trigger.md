@@ -2,12 +2,12 @@
 page_title: "zabbix_trigger Resource"
 subcategory: ""
 description: |-
-  Gere un trigger Zabbix (description, expression, priorite, activation).
+  Manages a Zabbix trigger (description, expression, priority, status).
 ---
 
 # zabbix_trigger (Resource)
 
-Permet de gerer un trigger Zabbix.
+Manages a Zabbix trigger.
 
 ## Example Usage
 
@@ -24,20 +24,20 @@ resource "zabbix_trigger" "icmp_loss" {
 
 ### Required
 
-- `description` (String) Description du trigger.
-- `expression` (String) Expression du trigger au format Zabbix.
+- `description` (String) Trigger description.
+- `expression` (String) Trigger expression in Zabbix format.
 
 ### Optional
 
-- `enabled` (Boolean) Active/desactive le trigger. Defaut: `true`.
-- `id` (String) ID de la ressource.
-- `priority` (String) Severite de `0` a `5`. Defaut: `"3"`.
+- `enabled` (Boolean) Enable/disable trigger. Default: `true`.
+- `id` (String) Resource ID.
+- `priority` (String) Severity from `0` to `5`. Default: `"3"`.
 
 ## Notes
 
-- `priority` est exposee en string (valeurs attendues: `0..5`).
-- Le provider n'impose pas de validation stricte sur la plage de `priority`;
-  la validation finale est donc faite par l'API Zabbix.
+- `priority` is exposed as a string (expected values: `0..5`).
+- The provider does not enforce strict range validation for `priority`;
+  final validation is performed by the Zabbix API.
 
 ## Import
 

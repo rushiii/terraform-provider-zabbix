@@ -2,20 +2,20 @@
 page_title: "zabbix_host Resource"
 subcategory: ""
 description: |-
-  Gere un host Zabbix, ses interfaces, ses liens de groupes, templates et tags.
+  Manages a Zabbix host, including interfaces, group/template links, and tags.
 ---
 
 # zabbix_host (Resource)
 
-Ressource pour creer et maintenir un host Zabbix.
+Resource to create and manage a Zabbix host.
 
-Cette ressource supporte:
+This resource supports:
 
-- association aux host groups par IDs ou par noms
-- association aux templates par IDs ou par noms
-- interfaces agent/SNMP/IPMI/JMX
-- details SNMP v2 pour les interfaces `type = 2`
-- tags du host
+- linking host groups by IDs or names
+- linking templates by IDs or names
+- agent/SNMP/IPMI/JMX interfaces
+- SNMP v2 details for interfaces with `type = 2`
+- host tags
 
 ## Example Usage
 
@@ -70,28 +70,28 @@ resource "zabbix_host" "switch_snmp_v2" {
 
 ### Required
 
-- `name` (String) Nom technique du host (`host` dans Zabbix).
+- `name` (String) Technical host name (`host` in Zabbix).
 
 ### Optional
 
-- `enabled` (Boolean) Host active/desactive. Defaut: `true`.
-- `host_group_ids` (Set of String) IDs de groupes d'hotes.
-- `host_group_names` (Set of String) Noms de groupes d'hotes (resolus en IDs).
-- `id` (String) ID de la ressource.
-- `interfaces` (Block List) Interfaces du host.
-- `tags` (Map of String) Tags du host sous forme `tag => value`.
-- `template_ids` (Set of String) IDs de templates a lier.
-- `template_names` (Set of String) Noms de templates a lier (resolus en IDs).
-- `visible_name` (String) Nom visible (`name`) du host dans Zabbix.
+- `enabled` (Boolean) Whether the host is enabled. Default: `true`.
+- `host_group_ids` (Set of String) Host group IDs.
+- `host_group_names` (Set of String) Host group names (resolved to IDs).
+- `id` (String) Resource ID.
+- `interfaces` (Block List) Host interfaces.
+- `tags` (Map of String) Host tags as `tag => value`.
+- `template_ids` (Set of String) Template IDs to link.
+- `template_names` (Set of String) Template names to link (resolved to IDs).
+- `visible_name` (String) Display name (`name`) in Zabbix.
 
-## Regles importantes
+## Important rules
 
-- Il faut fournir au moins `host_group_ids` ou `host_group_names`.
-- Les listes IDs/noms sont fusionnees sans doublons.
-- Pour `interfaces.use_ip = true`, le champ `ip` est obligatoire.
-- Pour `interfaces.use_ip = false`, le champ `dns` est obligatoire.
-- Si `interfaces.type = 2` (SNMP), seule la version `2` est actuellement supportee.
-- Si `snmp_details` est omis sur une interface SNMP, les valeurs par defaut sont:
+- You must provide at least `host_group_ids` or `host_group_names`.
+- ID and name lists are merged and deduplicated.
+- When `interfaces.use_ip = true`, `ip` is required.
+- When `interfaces.use_ip = false`, `dns` is required.
+- If `interfaces.type = 2` (SNMP), only version `2` is currently supported.
+- If `snmp_details` is omitted on an SNMP interface, defaults are:
   - `version = 2`
   - `community = "{$SNMP_COMMUNITY}"`
 
@@ -99,23 +99,23 @@ resource "zabbix_host" "switch_snmp_v2" {
 
 Required:
 
-- `type` (Number) Type interface: `1=Agent`, `2=SNMP`, `3=IPMI`, `4=JMX`.
+- `type` (Number) Interface type: `1=Agent`, `2=SNMP`, `3=IPMI`, `4=JMX`.
 
 Optional:
 
-- `main` (Boolean) Interface principale du type. Defaut: `true`.
-- `use_ip` (Boolean) Utilise IP (`true`) ou DNS (`false`). Defaut: `true`.
-- `ip` (String) Adresse IP (obligatoire si `use_ip = true`).
-- `dns` (String) Nom DNS (obligatoire si `use_ip = false`).
-- `port` (String) Port de destination. Defaut: `"10050"`.
-- `snmp_details` (Block) Details SNMP.
+- `main` (Boolean) Main interface for this type. Default: `true`.
+- `use_ip` (Boolean) Use IP (`true`) or DNS (`false`). Default: `true`.
+- `ip` (String) IP address (required when `use_ip = true`).
+- `dns` (String) DNS name (required when `use_ip = false`).
+- `port` (String) Destination port. Default: `"10050"`.
+- `snmp_details` (Block) SNMP details.
 
 ### Nested Schema for `interfaces.snmp_details`
 
 Optional:
 
-- `version` (Number) Version SNMP. Defaut: `2` (seule valeur acceptee actuellement).
-- `community` (String) Community SNMP. Defaut: `"{$SNMP_COMMUNITY}"`.
+- `version` (Number) SNMP version. Default: `2` (only accepted value currently).
+- `community` (String) SNMP community. Default: `"{$SNMP_COMMUNITY}"`.
 
 ## Import
 
@@ -125,7 +125,7 @@ tofu import zabbix_host.name 12345
 
 ## Notes
 
-- Lors d'un update, les interfaces sont remplacees en bloc via
+- During update, interfaces are replaced as a full set via
   `hostinterface.replacehostinterfaces`.
-- En pratique, Zabbix exige generalement au moins une interface valide
-  pour un host monitorable.
+- In practice, Zabbix usually requires at least one valid interface
+  for a monitorable host.

@@ -1,7 +1,7 @@
 terraform {
   required_providers {
     zabbix = {
-      source  = "RuShIII/terraform-provider-zabbix"
+      source  = "rushiii/terraform-provider-zabbix"
       version = "0.1.0"
     }
   }
@@ -10,7 +10,7 @@ terraform {
 provider "zabbix" {
   url       = "https://zabbix.example.com/api_jsonrpc.php"
   api_token = var.zabbix_api_token
-  # Alternative:
+  # Alternative authentication:
   # username = var.zabbix_username
   # password = var.zabbix_password
 }

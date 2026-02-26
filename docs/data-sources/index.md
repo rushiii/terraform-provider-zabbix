@@ -2,9 +2,9 @@
 page_title: "zabbix Data Sources"
 subcategory: ""
 description: |-
-  Liste des data sources du provider zabbix.
+  List of data sources for the zabbix provider.
 ---
 
 # zabbix Data Sources
 
-Aucun data source n'est disponible dans cette version du provider.
+No data sources are available in this provider version.

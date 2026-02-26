@@ -1,4 +1,4 @@
-module github.com/RuShIII/terraform-provider-zabbix
+module github.com/rushiii/terraform-provider-zabbix
 
 go 1.22.0
 

@@ -2,12 +2,12 @@
 page_title: "zabbix_host_group Resource"
 subcategory: ""
 description: |-
-  Gere un groupe d'hotes Zabbix.
+  Manages a Zabbix host group.
 ---
 
 # zabbix_host_group (Resource)
 
-Cree, lit, met a jour et supprime un host group Zabbix.
+Creates, reads, updates, and deletes a Zabbix host group.
 
 ## Example Usage
 
@@ -21,11 +21,11 @@ resource "zabbix_host_group" "linux" {
 
 ### Required
 
-- `name` (String) Nom du groupe d'hotes.
+- `name` (String) Host group name.
 
 ### Optional
 
-- `id` (String) ID interne de la ressource.
+- `id` (String) Internal resource ID.
 
 ## Import
 

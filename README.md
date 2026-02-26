@@ -1,23 +1,34 @@
-# Terraform/OpenTofu Provider Zabbix
+# Terraform/OpenTofu Zabbix Provider Project
 
-Provider Zabbix base sur le Terraform Plugin Framework.
+This repository is a **Zabbix provider project** for Terraform/OpenTofu, implemented with the Terraform Plugin Framework.
+It lets you manage Zabbix objects through the Zabbix JSON-RPC API.
 
-## Ressources incluses
+## What this project provides
+
+Supported resources:
 
 - `zabbix_host`
 - `zabbix_host_group`
 - `zabbix_template`
 - `zabbix_trigger`
 
-`zabbix_host` supporte les IDs et les noms pour les liens :
+Key capabilities:
 
-- `host_group_ids` et/ou `host_group_names`
-- `template_ids` et/ou `template_names`
+- Manage hosts, host groups, templates, and triggers from Terraform/OpenTofu
+- Use either IDs or names for host group/template links on `zabbix_host`
+- Support SNMP v2 host interfaces on `zabbix_host.interfaces`
 
-SNMP v2 est supporte sur `zabbix_host.interfaces` avec :
+## Authentication
 
-- `type = 2`
-- `snmp_details { version = 2, community = "..." }`
+The provider supports two authentication methods:
+
+- API token: `api_token`
+- Username/password: `username` + `password`
+
+Behavior:
+
+- If `api_token` is set, it has priority
+- If `api_token` is empty, `username` and `password` are required
 
 ## Build
 
@@ -26,7 +37,33 @@ go mod tidy
 go build ./...
 ```
 
-## Import
+## Local development test
+
+Build the provider:
+
+```bash
+go build -o dist/terraform-provider-zabbix .
+```
+
+Create a local Terraform CLI config (for dev override), then point Terraform/OpenTofu to the local binary:
+
+```hcl
+provider_installation {
+  dev_overrides {
+    "registry.terraform.io/rushiii/terraform-provider-zabbix" = "/absolute/path/to/terraform-provider-zabbix/dist"
+  }
+  direct {}
+}
+```
+
+Then run:
+
+```bash
+TF_CLI_CONFIG_FILE=/absolute/path/to/.terraformrc.local terraform init -reconfigure
+terraform plan
+```
+
+## Import examples
 
 ```bash
 tofu import zabbix_host.ubuntu01 12345

@@ -3,7 +3,7 @@ package provider
 import (
 	"context"
 
-	"github.com/RuShIII/terraform-provider-zabbix/internal/zabbix"
+	"github.com/rushiii/terraform-provider-zabbix/internal/zabbix"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"

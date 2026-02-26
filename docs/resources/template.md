@@ -2,12 +2,12 @@
 page_title: "zabbix_template Resource"
 subcategory: ""
 description: |-
-  Gere un template Zabbix et son rattachement aux host groups.
+  Manages a Zabbix template and its host group links.
 ---
 
 # zabbix_template (Resource)
 
-Permet de gerer un template Zabbix.
+Manages a Zabbix template.
 
 ## Example Usage
 
@@ -26,18 +26,18 @@ resource "zabbix_template" "custom_icmp" {
 
 ### Required
 
-- `host` (String) Nom interne du template (champ `host` Zabbix).
-- `host_group_ids` (Set of String) IDs des groupes auxquels rattacher le template.
+- `host` (String) Internal template name (Zabbix `host` field).
+- `host_group_ids` (Set of String) IDs of host groups to attach to the template.
 
 ### Optional
 
-- `id` (String) ID de la ressource.
-- `name` (String) Nom visible du template.
+- `id` (String) Resource ID.
+- `name` (String) Visible template name.
 
-## Comportement
+## Behavior
 
-- Si `name` est omis ou vide, il prend la meme valeur que `host`.
-- Les `host_group_ids` doivent etre des IDs existants cote Zabbix.
+- If `name` is omitted or empty, it defaults to the same value as `host`.
+- `host_group_ids` must be existing IDs in Zabbix.
 
 ## Import
 
