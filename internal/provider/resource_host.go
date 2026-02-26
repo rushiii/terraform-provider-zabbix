@@ -22,6 +22,7 @@ var (
 	_ resource.Resource                = &hostResource{}
 	_ resource.ResourceWithConfigure   = &hostResource{}
 	_ resource.ResourceWithImportState = &hostResource{}
+	_ resource.ResourceWithModifyPlan  = &hostResource{}
 )
 
 type hostResource struct {
@@ -185,6 +186,27 @@ func (r *hostResource) Configure(_ context.Context, req resource.ConfigureReques
 		return
 	}
 	r.client = providerData.Client
+}
+
+func (r *hostResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if r.client == nil || req.Plan.Raw.IsNull() {
+		return
+	}
+	var plan hostResourceModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	groupIDs, d := resolveHostGroupIDs(ctx, r.client, plan)
+	resp.Diagnostics.Append(d...)
+	templateIDs, d := resolveTemplateIDs(ctx, r.client, plan)
+	resp.Diagnostics.Append(d...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	plan.HostGroupIDs, _ = types.SetValueFrom(ctx, types.StringType, groupIDs)
+	plan.TemplateIDs, _ = types.SetValueFrom(ctx, types.StringType, templateIDs)
+	resp.Diagnostics.Append(resp.Plan.Set(ctx, &plan)...)
 }
 
 func (r *hostResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
