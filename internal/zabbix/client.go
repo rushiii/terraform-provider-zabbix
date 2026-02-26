@@ -219,6 +219,51 @@ type SNMPDetails struct {
 	Context   string `json:"contextname,omitempty"`
 }
 
+// parseInt accepts JSON number or string for Zabbix API compatibility (some versions return main/type/useip as string).
+func parseInt(v interface{}) int {
+	if v == nil {
+		return 0
+	}
+	switch x := v.(type) {
+	case float64:
+		return int(x)
+	case string:
+		i, _ := strconv.Atoi(x)
+		return i
+	case int:
+		return x
+	default:
+		return 0
+	}
+}
+
+type hostInterfaceJSON struct {
+	InterfaceID string       `json:"interfaceid,omitempty"`
+	Type        interface{}  `json:"type"`
+	Main        interface{}  `json:"main"`
+	UseIP       interface{}  `json:"useip"`
+	IP          string       `json:"ip,omitempty"`
+	DNS         string       `json:"dns,omitempty"`
+	Port        string       `json:"port,omitempty"`
+	Details     *SNMPDetails `json:"details,omitempty"`
+}
+
+func (hi *HostInterface) UnmarshalJSON(data []byte) error {
+	var raw hostInterfaceJSON
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	hi.InterfaceID = raw.InterfaceID
+	hi.Type = parseInt(raw.Type)
+	hi.Main = parseInt(raw.Main)
+	hi.UseIP = parseInt(raw.UseIP)
+	hi.IP = raw.IP
+	hi.DNS = raw.DNS
+	hi.Port = raw.Port
+	hi.Details = raw.Details
+	return nil
+}
+
 type HostInterface struct {
 	InterfaceID string       `json:"interfaceid,omitempty"`
 	Type        int          `json:"type"`
