@@ -447,7 +447,7 @@ func (c *Client) HostUpdate(ctx context.Context, hostID string, req HostUpdateRe
 	if tags == nil {
 		tags = []Tag{}
 	}
-	params := map[string]any{
+	hostObj := map[string]any{
 		"hostid": hostID,
 		"host":   req.Host,
 		"name":   req.Name,
@@ -455,10 +455,13 @@ func (c *Client) HostUpdate(ctx context.Context, hostID string, req HostUpdateRe
 		"groups": groups,
 		"tags":   tags,
 	}
-	params["templates"] = templates
+	if len(templates) > 0 {
+		hostObj["templates"] = templates
+	}
 
+	// L'API Zabbix host.update attend un tableau d'objets host.
 	var ignored any
-	if err := c.callAuth(ctx, "host.update", params, &ignored); err != nil {
+	if err := c.callAuth(ctx, "host.update", []map[string]any{hostObj}, &ignored); err != nil {
 		return err
 	}
 
