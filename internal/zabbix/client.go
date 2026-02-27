@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"sync"
@@ -151,6 +152,12 @@ func (c *Client) callAuth(ctx context.Context, method string, params interface{}
 }
 
 func (c *Client) call(ctx context.Context, method string, params interface{}, withAuth bool, out interface{}) error {
+	if method == "host.update" {
+		if b, err := json.Marshal(params); err == nil {
+			log.Printf("zabbix client debug: host.update params=%s", string(b))
+		}
+	}
+
 	requestBody := rpcRequest{
 		JSONRPC: "2.0",
 		Method:  method,
