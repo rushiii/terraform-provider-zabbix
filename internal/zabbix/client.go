@@ -384,13 +384,17 @@ func (c *Client) HostCreate(ctx context.Context, req HostCreateRequest) (string,
 		templates = append(templates, map[string]string{"templateid": t})
 	}
 
+	tags := req.Tags
+	if tags == nil {
+		tags = []Tag{}
+	}
 	params := map[string]any{
 		"host":       req.Host,
 		"name":       req.Name,
 		"status":     req.Status,
 		"interfaces": req.Interfaces,
 		"groups":     groups,
-		"tags":       req.Tags,
+		"tags":       tags,
 	}
 	if len(templates) > 0 {
 		params["templates"] = templates
@@ -439,13 +443,17 @@ func (c *Client) HostUpdate(ctx context.Context, hostID string, req HostUpdateRe
 		templates = append(templates, map[string]string{"templateid": t})
 	}
 
+	tags := req.Tags
+	if tags == nil {
+		tags = []Tag{}
+	}
 	params := map[string]any{
 		"hostid": hostID,
 		"host":   req.Host,
 		"name":   req.Name,
 		"status": req.Status,
 		"groups": groups,
-		"tags":   req.Tags,
+		"tags":   tags,
 	}
 	params["templates"] = templates
 
