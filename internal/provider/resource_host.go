@@ -292,7 +292,11 @@ func (r *hostResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 	state.TemplateIDs, _ = types.SetValueFrom(ctx, types.StringType, templateIDs)
 	state.TemplateNames, _ = types.SetValueFrom(ctx, types.StringType, templateNames)
 
-	state.Tags, _ = tagsToMap(ctx, host.Tags)
+	if len(host.Tags) == 0 {
+		state.Tags = types.MapNull(types.StringType)
+	} else {
+		state.Tags, _ = tagsToMap(ctx, host.Tags)
+	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
