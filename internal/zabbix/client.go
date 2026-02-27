@@ -455,11 +455,12 @@ func (c *Client) HostUpdate(ctx context.Context, hostID string, req HostUpdateRe
 		tags = []Tag{}
 	}
 	params := map[string]any{
-		"hostid": hostID,
-		"host":   req.Host,
-		"status": req.Status, // 0=monitored, 1=not monitored (integer pour Zabbix 6.x)
-		"groups": groups,
-		"tags":   tags,
+		"hostid":     hostID,
+		"host":       req.Host,
+		"status":     req.Status, // 0=monitored, 1=not monitored (integer pour Zabbix 6.x)
+		"interfaces": req.Interfaces,
+		"groups":     groups,
+		"tags":       tags,
 	}
 	if req.Name != "" {
 		params["name"] = req.Name
@@ -470,15 +471,11 @@ func (c *Client) HostUpdate(ctx context.Context, hostID string, req HostUpdateRe
 
 	// Zabbix 6.x host.update attend un tableau d'objets host.
 	var ignored any
-	if err := c.callAuth(ctx, "host.update", []map[string]any{params}, &ignored); err != nil {
+	if err := c.callAuth(ctx, "host.update", params, &ignored); err != nil {
 		return err
 	}
 
-	replaceParams := map[string]any{
-		"hostid":     hostID,
-		"interfaces": req.Interfaces,
-	}
-	return c.callAuth(ctx, "hostinterface.replacehostinterfaces", replaceParams, &ignored)
+	return nil
 }
 
 func (c *Client) HostDelete(ctx context.Context, hostID string) error {
