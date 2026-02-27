@@ -152,7 +152,8 @@ func (c *Client) callAuth(ctx context.Context, method string, params interface{}
 }
 
 func (c *Client) call(ctx context.Context, method string, params interface{}, withAuth bool, out interface{}) error {
-	if method == "host.update" || method == "hostinterface.replacehostinterfaces" {
+	if method == "host.update" || method == "hostinterface.replacehostinterfaces" ||
+		method == "hostinterface.update" || method == "hostinterface.create" || method == "hostinterface.delete" {
 		if b, err := json.Marshal(params); err == nil {
 			log.Printf("zabbix client debug: %s params=%s", method, string(b))
 		}
@@ -457,7 +458,7 @@ func (c *Client) HostUpdate(ctx context.Context, hostID string, req HostUpdateRe
 	params := map[string]any{
 		"hostid": hostID,
 		"host":   req.Host,
-		"status": req.Status,
+		"status": strconv.Itoa(req.Status),
 		"groups": groups,
 		"tags":   tags,
 	}
@@ -468,18 +469,59 @@ func (c *Client) HostUpdate(ctx context.Context, hostID string, req HostUpdateRe
 		params["templates"] = templates
 	}
 
-	// Zabbix 6.x host.update attend un tableau d'objets host.
 	var ignored any
-	if err := c.callAuth(ctx, "host.update", []map[string]any{params}, &ignored); err != nil {
-		return err
+	if err := c.callAuth(ctx, "host.update", params, &ignored); err != nil {
+		return fmt.Errorf("host.update: %w", err)
 	}
 
-	// Remplacer les interfaces de l'hôte (nouvelle liste = remplacement complet).
-	replaceParams := map[string]any{
-		"hostid":     hostID,
-		"interfaces": req.Interfaces,
+	// Récupérer les interfaces actuelles pour update (éviter replace qui casse les items liés).
+	curHost, err := c.HostGetByID(ctx, hostID)
+	if err != nil {
+		return fmt.Errorf("host.get (interfaces): %w", err)
 	}
-	return c.callAuth(ctx, "hostinterface.replacehostinterfaces", replaceParams, &ignored)
+	currentByTypeMain := make(map[string]string) // "(type,main)" -> interfaceid
+	for _, iface := range curHost.Interfaces {
+		key := fmt.Sprintf("%d,%d", iface.Type, iface.Main)
+		currentByTypeMain[key] = iface.InterfaceID
+	}
+
+	matched := make(map[string]bool) // interfaceid déjà associé à une interface souhaitée
+
+	for _, iface := range req.Interfaces {
+		key := fmt.Sprintf("%d,%d", iface.Type, iface.Main)
+		interfaceID, exists := currentByTypeMain[key]
+		payload := map[string]any{
+			"type":  iface.Type,
+			"main":  iface.Main,
+			"useip": iface.UseIP,
+			"ip":    iface.IP,
+			"dns":   iface.DNS,
+			"port":  iface.Port,
+		}
+		if exists && interfaceID != "" {
+			payload["interfaceid"] = interfaceID
+			if err := c.callAuth(ctx, "hostinterface.update", payload, &ignored); err != nil {
+				return fmt.Errorf("hostinterface.update: %w", err)
+			}
+			matched[interfaceID] = true
+		} else {
+			payload["hostid"] = hostID
+			if err := c.callAuth(ctx, "hostinterface.create", payload, &ignored); err != nil {
+				return fmt.Errorf("hostinterface.create: %w", err)
+			}
+		}
+	}
+
+	// Supprimer les interfaces actuelles qui ne sont plus dans la config.
+	for _, iface := range curHost.Interfaces {
+		if matched[iface.InterfaceID] {
+			continue
+		}
+		if err := c.callAuth(ctx, "hostinterface.delete", []string{iface.InterfaceID}, &ignored); err != nil {
+			return fmt.Errorf("hostinterface.delete: %w", err)
+		}
+	}
+	return nil
 }
 
 func (c *Client) HostDelete(ctx context.Context, hostID string) error {
