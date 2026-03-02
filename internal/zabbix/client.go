@@ -823,9 +823,7 @@ func (c *Client) ItemCreate(ctx context.Context, req ItemCreateRequest) (string,
 	if req.Units != "" {
 		params["units"] = req.Units
 	}
-	if req.DelayFlex != "" {
-		params["delay_flex"] = req.DelayFlex
-	}
+	// Zabbix 6.4+ does not accept delay_flex in item.create; custom intervals are configured differently.
 	var result struct {
 		ItemIDs []string `json:"itemids"`
 	}
@@ -871,9 +869,7 @@ func (c *Client) ItemUpdate(ctx context.Context, itemID string, req ItemCreateRe
 	if req.Units != "" {
 		params["units"] = req.Units
 	}
-	if req.DelayFlex != "" {
-		params["delay_flex"] = req.DelayFlex
-	}
+	// Zabbix 6.4+ does not accept delay_flex in item.update.
 	var ignored any
 	return c.callAuth(ctx, "item.update", params, &ignored)
 }
