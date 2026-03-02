@@ -67,62 +67,62 @@ func (r *hostResource) Metadata(_ context.Context, req resource.MetadataRequest,
 
 func (r *hostResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Ressource Zabbix host.",
+		MarkdownDescription: "Zabbix host resource.",,
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed: true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 				},
-				MarkdownDescription: "ID interne Zabbix.",
+				MarkdownDescription: "Internal Zabbix ID.",
 			},
 			"name": schema.StringAttribute{
 				Required:            true,
-				MarkdownDescription: "Nom technique du host (`host`).",
+				MarkdownDescription: "Host technical name (`host`).",
 			},
 			"visible_name": schema.StringAttribute{
 				Optional:            true,
-				MarkdownDescription: "Nom visible (`name`) dans Zabbix.",
+				MarkdownDescription: "Visible name (`name`) in Zabbix.",
 			},
 			"enabled": schema.BoolAttribute{
 				Optional:            true,
 				Computed:            true,
 				Default:             booldefault.StaticBool(true),
-				MarkdownDescription: "Host activé ou non.",
+				MarkdownDescription: "Whether the host is enabled.",
 			},
 			"host_group_ids": schema.SetAttribute{
 				Optional:            true,
 				Computed:            true,
 				ElementType:         types.StringType,
-				MarkdownDescription: "IDs de groupes d'hôtes.",
+				MarkdownDescription: "Host group IDs.",
 			},
 			"host_group_names": schema.SetAttribute{
 				Optional:            true,
 				Computed:            true,
 				ElementType:         types.StringType,
-				MarkdownDescription: "Noms de groupes d'hôtes. Alternative a host_group_ids.",
+				MarkdownDescription: "Host group names. Alternative to host_group_ids.",
 			},
 			"template_ids": schema.SetAttribute{
 				Optional:            true,
 				Computed:            true,
 				ElementType:         types.StringType,
-				MarkdownDescription: "IDs de templates liés.",
+				MarkdownDescription: "Linked template IDs.",
 			},
 			"template_names": schema.SetAttribute{
 				Optional:            true,
 				Computed:            true,
 				ElementType:         types.StringType,
-				MarkdownDescription: "Noms de templates lies. Alternative a template_ids.",
+				MarkdownDescription: "Template names. Alternative to template_ids.",
 			},
 			"tags": schema.MapAttribute{
 				Optional:            true,
 				ElementType:         types.StringType,
-				MarkdownDescription: "Map de tags (tag => value).",
+				MarkdownDescription: "Tags map (tag => value).",
 			},
 		},
 		Blocks: map[string]schema.Block{
 			"interfaces": schema.ListNestedBlock{
-				MarkdownDescription: "Interfaces du host.",
+				MarkdownDescription: "Host interfaces.",
 				NestedObject: schema.NestedBlockObject{
 					Attributes: map[string]schema.Attribute{
 						"type": schema.Int64Attribute{
@@ -153,19 +153,19 @@ func (r *hostResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 					},
 					Blocks: map[string]schema.Block{
 						"snmp_details": schema.SingleNestedBlock{
-							MarkdownDescription: "Details SNMP (v2 supporte). Utilise surtout avec type=2.",
+							MarkdownDescription: "SNMP details (v2 supported). Used mainly with type=2.",
 							Attributes: map[string]schema.Attribute{
 								"version": schema.Int64Attribute{
 									Optional:            true,
 									Computed:            true,
 									Default:             int64default.StaticInt64(2),
-									MarkdownDescription: "Version SNMP (2 supportee).",
+									MarkdownDescription: "SNMP version (2 supported).",
 								},
 								"community": schema.StringAttribute{
 									Optional:            true,
 									Computed:            true,
 									Default:             stringdefault.StaticString("{$SNMP_COMMUNITY}"),
-									MarkdownDescription: "Community SNMP v1/v2c.",
+									MarkdownDescription: "SNMP v1/v2c community.",
 								},
 							},
 						},
@@ -182,7 +182,7 @@ func (r *hostResource) Configure(_ context.Context, req resource.ConfigureReques
 	}
 	providerData, ok := req.ProviderData.(*providerData)
 	if !ok || providerData.Client == nil {
-		resp.Diagnostics.AddError("Provider invalide", "Client Zabbix indisponible.")
+		resp.Diagnostics.AddError("Invalid provider", "Zabbix client unavailable.")
 		return
 	}
 	r.client = providerData.Client
@@ -238,7 +238,7 @@ func (r *hostResource) Create(ctx context.Context, req resource.CreateRequest, r
 		Tags:        tags,
 	})
 	if err != nil {
-		resp.Diagnostics.AddError("Erreur host.create", err.Error())
+		resp.Diagnostics.AddError("host.create error", err.Error())
 		return
 	}
 
@@ -261,7 +261,7 @@ func (r *hostResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 			resp.State.RemoveResource(ctx)
 			return
 		}
-		resp.Diagnostics.AddError("Erreur host.get", err.Error())
+		resp.Diagnostics.AddError("host.get error", err.Error())
 		return
 	}
 
@@ -331,7 +331,7 @@ func (r *hostResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		Tags:        tags,
 	})
 	if err != nil {
-		resp.Diagnostics.AddError("Erreur host.update", err.Error())
+		resp.Diagnostics.AddError("host.update error", err.Error())
 		return
 	}
 
@@ -349,7 +349,7 @@ func (r *hostResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 	}
 	err := r.client.HostDelete(ctx, state.ID.ValueString())
 	if err != nil && !zabbix.IsNotFound(err) {
-		resp.Diagnostics.AddError("Erreur host.delete", err.Error())
+		resp.Diagnostics.AddError("host.delete error", err.Error())
 	}
 }
 
@@ -406,8 +406,8 @@ func resolveHostGroupIDs(ctx context.Context, client *zabbix.Client, plan hostRe
 	if len(ids) == 0 && len(names) == 0 {
 		diags.AddAttributeError(
 			path.Root("host_group_ids"),
-			"Valeur manquante",
-			"Renseigne au moins `host_group_ids` ou `host_group_names`.",
+			"Missing value",
+			"Provide at least `host_group_ids` or `host_group_names`.",
 		)
 		return nil, diags
 	}
@@ -425,7 +425,7 @@ func resolveHostGroupIDs(ctx context.Context, client *zabbix.Client, plan hostRe
 	if len(names) > 0 {
 		byName, err := client.HostGroupIDsByNames(ctx, names)
 		if err != nil {
-			diags.AddError("Resolution des host groups impossible", err.Error())
+			diags.AddError("Cannot resolve host groups", err.Error())
 			return nil, diags
 		}
 		for _, id := range byName {
@@ -464,7 +464,7 @@ func resolveTemplateIDs(ctx context.Context, client *zabbix.Client, plan hostRes
 	if len(names) > 0 {
 		byName, err := client.TemplateIDsByNames(ctx, names)
 		if err != nil {
-			diags.AddError("Resolution des templates impossible", err.Error())
+			diags.AddError("Cannot resolve templates", err.Error())
 			return nil, diags
 		}
 		for _, id := range byName {
@@ -513,16 +513,16 @@ func expandInterfaces(interfaces []hostInterfaceModel) ([]zabbix.HostInterface, 
 		if useIP && (it.IP.IsNull() || it.IP.ValueString() == "") {
 			diags.AddAttributeError(
 				path.Root("interfaces").AtListIndex(index).AtName("ip"),
-				"Valeur manquante",
-				"`ip` est obligatoire quand `use_ip=true`.",
+				"Missing value",
+				"`ip` is required when `use_ip=true`.",
 			)
 			continue
 		}
 		if !useIP && (it.DNS.IsNull() || it.DNS.ValueString() == "") {
 			diags.AddAttributeError(
 				path.Root("interfaces").AtListIndex(index).AtName("dns"),
-				"Valeur manquante",
-				"`dns` est obligatoire quand `use_ip=false`.",
+				"Missing value",
+				"`dns` is required when `use_ip=false`.",
 			)
 			continue
 		}
@@ -548,8 +548,8 @@ func expandInterfaces(interfaces []hostInterfaceModel) ([]zabbix.HostInterface, 
 			if details.Version != 2 {
 				diags.AddAttributeError(
 					path.Root("interfaces").AtListIndex(index).AtName("snmp_details").AtName("version"),
-					"Version SNMP non supportee",
-					"Ce provider prend actuellement en charge uniquement SNMP v2 pour les hosts.",
+"Unsupported SNMP version",
+				"This provider currently only supports SNMP v2 for hosts.",
 				)
 				continue
 			}

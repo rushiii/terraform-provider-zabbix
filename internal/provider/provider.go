@@ -46,33 +46,33 @@ func (p *zabbixProvider) Metadata(_ context.Context, _ provider.MetadataRequest,
 
 func (p *zabbixProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp *provider.SchemaResponse) {
 	resp.Schema = pschema.Schema{
-		MarkdownDescription: "Provider OpenTofu/Terraform pour l'API Zabbix (JSON-RPC).",
+		MarkdownDescription: "OpenTofu/Terraform provider for the Zabbix API (JSON-RPC).",
 		Attributes: map[string]pschema.Attribute{
 			"url": pschema.StringAttribute{
 				Required:            true,
-				MarkdownDescription: "URL de l'API Zabbix, ex: https://zabbix.example.com/api_jsonrpc.php",
+				MarkdownDescription: "Zabbix API URL, e.g. https://zabbix.example.com/api_jsonrpc.php",
 			},
 			"api_token": pschema.StringAttribute{
 				Optional:            true,
 				Sensitive:           true,
-				MarkdownDescription: "Token API Zabbix. Prioritaire si défini.",
+				MarkdownDescription: "Zabbix API token. Takes precedence when set.",
 			},
 			"username": pschema.StringAttribute{
 				Optional:            true,
-				MarkdownDescription: "Nom d'utilisateur Zabbix (si api_token absent).",
+				MarkdownDescription: "Zabbix username (when api_token is not set).",
 			},
 			"password": pschema.StringAttribute{
 				Optional:            true,
 				Sensitive:           true,
-				MarkdownDescription: "Mot de passe Zabbix (si api_token absent).",
+				MarkdownDescription: "Zabbix password (when api_token is not set).",
 			},
 			"timeout_seconds": pschema.Int64Attribute{
 				Optional:            true,
-				MarkdownDescription: "Timeout HTTP en secondes (défaut: 30).",
+				MarkdownDescription: "HTTP timeout in seconds (default: 30).",
 			},
 			"insecure_skip_tls": pschema.BoolAttribute{
 				Optional:            true,
-				MarkdownDescription: "Ignore la validation TLS.",
+				MarkdownDescription: "Skip TLS verification.",
 			},
 		},
 	}
@@ -108,14 +108,14 @@ func (p *zabbixProvider) Configure(ctx context.Context, req provider.ConfigureRe
 		Auth:            auth,
 	})
 	if err != nil {
-		resp.Diagnostics.AddError("Erreur initialisation client Zabbix", err.Error())
+		resp.Diagnostics.AddError("Zabbix client initialization error", err.Error())
 		return
 	}
 
 	if err := client.Ping(ctx); err != nil {
 		resp.Diagnostics.AddError(
-			"Connexion Zabbix invalide",
-			fmt.Sprintf("Impossible de valider l'accès API: %v", err),
+			"Invalid Zabbix connection",
+			fmt.Sprintf("Cannot validate API access: %v", err),
 		)
 		return
 	}
@@ -128,7 +128,7 @@ func (p *zabbixProvider) Configure(ctx context.Context, req provider.ConfigureRe
 func checkKnown(cfg providerModel) diag.Diagnostics {
 	var diags diag.Diagnostics
 	if cfg.URL.IsUnknown() {
-		diags.AddAttributeError(path.Root("url"), "Valeur inconnue", "`url` doit être connue au plan.")
+		diags.AddAttributeError(path.Root("url"), "Unknown value", "`url` must be known at plan time.")
 	}
 	return diags
 }
@@ -152,15 +152,15 @@ func buildAuth(cfg providerModel) (zabbix.Auth, diag.Diagnostics) {
 
 	if token != "" {
 		if user != "" || pass != "" {
-			diags.AddWarning("Authentification mixte", "`api_token` est prioritaire sur `username/password`.")
+			diags.AddWarning("Mixed authentication", "`api_token` takes precedence over `username/password`.")
 		}
 		return zabbix.Auth{Method: zabbix.AuthToken, Token: token}, diags
 	}
 
 	if user == "" || pass == "" {
 		diags.AddError(
-			"Authentification invalide",
-			"Renseigne soit `api_token`, soit `username` et `password`.",
+			"Invalid authentication",
+			"Provide either `api_token` or `username` and `password`.",
 		)
 		return zabbix.Auth{}, diags
 	}
@@ -177,5 +177,6 @@ func (p *zabbixProvider) Resources(_ context.Context) []func() resource.Resource
 		NewHostGroupResource,
 		NewTemplateResource,
 		NewTriggerResource,
+		NewItemResource,
 	}
 }

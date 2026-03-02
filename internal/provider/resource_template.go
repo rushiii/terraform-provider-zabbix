@@ -40,7 +40,7 @@ func (r *templateResource) Metadata(_ context.Context, req resource.MetadataRequ
 
 func (r *templateResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Ressource Zabbix template.",
+		MarkdownDescription: "Zabbix template resource.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed: true,
@@ -50,17 +50,17 @@ func (r *templateResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 			},
 			"host": schema.StringAttribute{
 				Required:            true,
-				MarkdownDescription: "Nom interne du template.",
+				MarkdownDescription: "Internal template name.",
 			},
 			"name": schema.StringAttribute{
 				Optional:            true,
 				Computed:            true,
-				MarkdownDescription: "Nom visible du template.",
+				MarkdownDescription: "Visible template name.",
 			},
 			"host_group_ids": schema.SetAttribute{
 				Required:            true,
 				ElementType:         types.StringType,
-				MarkdownDescription: "IDs de groupes auxquels rattacher le template.",
+				MarkdownDescription: "Group IDs to attach the template to.",
 			},
 		},
 	}
@@ -72,7 +72,7 @@ func (r *templateResource) Configure(_ context.Context, req resource.ConfigureRe
 	}
 	providerData, ok := req.ProviderData.(*providerData)
 	if !ok || providerData.Client == nil {
-		resp.Diagnostics.AddError("Provider invalide", "Client Zabbix indisponible.")
+		resp.Diagnostics.AddError("Invalid provider", "Zabbix client unavailable.")
 		return
 	}
 	r.client = providerData.Client
@@ -98,7 +98,7 @@ func (r *templateResource) Create(ctx context.Context, req resource.CreateReques
 
 	id, err := r.client.TemplateCreate(ctx, plan.Host.ValueString(), name, groupIDs)
 	if err != nil {
-		resp.Diagnostics.AddError("Erreur template.create", err.Error())
+		resp.Diagnostics.AddError("template.create error", err.Error())
 		return
 	}
 
@@ -120,7 +120,7 @@ func (r *templateResource) Read(ctx context.Context, req resource.ReadRequest, r
 			resp.State.RemoveResource(ctx)
 			return
 		}
-		resp.Diagnostics.AddError("Erreur template.get", err.Error())
+		resp.Diagnostics.AddError("template.get error", err.Error())
 		return
 	}
 
@@ -156,7 +156,7 @@ func (r *templateResource) Update(ctx context.Context, req resource.UpdateReques
 	}
 
 	if err := r.client.TemplateUpdate(ctx, state.ID.ValueString(), plan.Host.ValueString(), name, groupIDs); err != nil {
-		resp.Diagnostics.AddError("Erreur template.update", err.Error())
+		resp.Diagnostics.AddError("template.update error", err.Error())
 		return
 	}
 
@@ -173,7 +173,7 @@ func (r *templateResource) Delete(ctx context.Context, req resource.DeleteReques
 	}
 	err := r.client.TemplateDelete(ctx, state.ID.ValueString())
 	if err != nil && !zabbix.IsNotFound(err) {
-		resp.Diagnostics.AddError("Erreur template.delete", err.Error())
+		resp.Diagnostics.AddError("template.delete error", err.Error())
 	}
 }
 

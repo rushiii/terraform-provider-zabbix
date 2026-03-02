@@ -43,7 +43,7 @@ func (r *triggerResource) Metadata(_ context.Context, req resource.MetadataReque
 
 func (r *triggerResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Ressource Zabbix trigger.",
+		MarkdownDescription: "Zabbix trigger resource.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed: true,
@@ -61,7 +61,7 @@ func (r *triggerResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 				Optional: true,
 				Computed: true,
 				Default:  stringdefault.StaticString("3"),
-				MarkdownDescription: "0..5 (0 non classifié, 5 disaster).",
+				MarkdownDescription: "0..5 (0 not classified, 5 disaster).",
 			},
 			"enabled": schema.BoolAttribute{
 				Optional: true,
@@ -78,7 +78,7 @@ func (r *triggerResource) Configure(_ context.Context, req resource.ConfigureReq
 	}
 	providerData, ok := req.ProviderData.(*providerData)
 	if !ok || providerData.Client == nil {
-		resp.Diagnostics.AddError("Provider invalide", "Client Zabbix indisponible.")
+		resp.Diagnostics.AddError("Invalid provider", "Zabbix client unavailable.")
 		return
 	}
 	r.client = providerData.Client
@@ -99,7 +99,7 @@ func (r *triggerResource) Create(ctx context.Context, req resource.CreateRequest
 		plan.Enabled.ValueBool(),
 	)
 	if err != nil {
-		resp.Diagnostics.AddError("Erreur trigger.create", err.Error())
+		resp.Diagnostics.AddError("trigger.create error", err.Error())
 		return
 	}
 
@@ -120,7 +120,7 @@ func (r *triggerResource) Read(ctx context.Context, req resource.ReadRequest, re
 			resp.State.RemoveResource(ctx)
 			return
 		}
-		resp.Diagnostics.AddError("Erreur trigger.get", err.Error())
+		resp.Diagnostics.AddError("trigger.get error", err.Error())
 		return
 	}
 
@@ -149,7 +149,7 @@ func (r *triggerResource) Update(ctx context.Context, req resource.UpdateRequest
 		plan.Enabled.ValueBool(),
 	)
 	if err != nil {
-		resp.Diagnostics.AddError("Erreur trigger.update", err.Error())
+		resp.Diagnostics.AddError("trigger.update error", err.Error())
 		return
 	}
 
@@ -165,7 +165,7 @@ func (r *triggerResource) Delete(ctx context.Context, req resource.DeleteRequest
 	}
 	err := r.client.TriggerDelete(ctx, state.ID.ValueString())
 	if err != nil && !zabbix.IsNotFound(err) {
-		resp.Diagnostics.AddError("Erreur trigger.delete", err.Error())
+		resp.Diagnostics.AddError("trigger.delete error", err.Error())
 	}
 }
 

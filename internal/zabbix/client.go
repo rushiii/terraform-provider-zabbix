@@ -75,7 +75,7 @@ type rpcResponse struct {
 
 func NewClient(cfg ClientConfig) (*Client, error) {
 	if cfg.URL == "" {
-		return nil, errors.New("url Zabbix obligatoire")
+		return nil, errors.New("Zabbix URL is required")
 	}
 
 	timeout := cfg.Timeout
@@ -108,7 +108,7 @@ func (c *Client) nextID() int64 {
 func (c *Client) ensureAuth(ctx context.Context) (string, error) {
 	if c.auth.Method == AuthToken {
 		if c.auth.Token == "" {
-			return "", errors.New("api_token vide")
+			return "", errors.New("api_token is empty")
 		}
 		return c.auth.Token, nil
 	}
@@ -415,7 +415,7 @@ func (c *Client) HostCreate(ctx context.Context, req HostCreateRequest) (string,
 		return "", err
 	}
 	if len(result.HostIDs) == 0 {
-		return "", errors.New("host.create n'a retourné aucun hostid")
+		return "", errors.New("host.create returned no hostid")
 	}
 	return result.HostIDs[0], nil
 }
@@ -474,7 +474,7 @@ func (c *Client) HostUpdate(ctx context.Context, hostID string, req HostUpdateRe
 		return fmt.Errorf("host.update: %w", err)
 	}
 
-	// Récupérer les interfaces actuelles pour update (éviter replace qui casse les items liés).
+	// Get current interfaces for update (avoid replace which breaks linked items).
 	curHost, err := c.HostGetByID(ctx, hostID)
 	if err != nil {
 		return fmt.Errorf("host.get (interfaces): %w", err)
@@ -512,7 +512,7 @@ func (c *Client) HostUpdate(ctx context.Context, hostID string, req HostUpdateRe
 		}
 	}
 
-	// Supprimer les interfaces actuelles qui ne sont plus dans la config.
+	// Remove current interfaces that are no longer in the config.
 	for _, iface := range curHost.Interfaces {
 		if matched[iface.InterfaceID] {
 			continue
@@ -542,7 +542,7 @@ func (c *Client) HostGroupCreate(ctx context.Context, name string) (string, erro
 		return "", err
 	}
 	if len(result.GroupIDs) == 0 {
-		return "", errors.New("hostgroup.create n'a retourné aucun groupid")
+		return "", errors.New("hostgroup.create returned no groupid")
 	}
 	return result.GroupIDs[0], nil
 }
@@ -576,10 +576,10 @@ func (c *Client) HostGroupIDsByNames(ctx context.Context, names []string) ([]str
 			return nil, err
 		}
 		if len(groups) == 0 {
-			return nil, fmt.Errorf("groupe d'hotes introuvable: %s", name)
+			return nil, fmt.Errorf("host group not found: %s", name)
 		}
 		if len(groups) > 1 {
-			return nil, fmt.Errorf("groupe d'hotes ambigu: %s", name)
+			return nil, fmt.Errorf("ambiguous host group: %s", name)
 		}
 		out = append(out, groups[0].GroupID)
 	}
@@ -622,7 +622,7 @@ func (c *Client) TemplateCreate(ctx context.Context, host, name string, groupIDs
 		return "", err
 	}
 	if len(result.TemplateIDs) == 0 {
-		return "", errors.New("template.create n'a retourné aucun templateid")
+		return "", errors.New("template.create returned no templateid")
 	}
 	return result.TemplateIDs[0], nil
 }
@@ -671,7 +671,7 @@ func (c *Client) templateIDByName(ctx context.Context, name string) (string, err
 		return hostMatches[0].TemplateID, nil
 	}
 	if len(hostMatches) > 1 {
-		return "", fmt.Errorf("template ambigu (host): %s", name)
+		return "", fmt.Errorf("ambiguous template (host): %s", name)
 	}
 
 	paramsByName := map[string]any{
@@ -685,10 +685,10 @@ func (c *Client) templateIDByName(ctx context.Context, name string) (string, err
 		return "", err
 	}
 	if len(nameMatches) == 0 {
-		return "", fmt.Errorf("template introuvable: %s", name)
+		return "", fmt.Errorf("template not found: %s", name)
 	}
 	if len(nameMatches) > 1 {
-		return "", fmt.Errorf("template ambigu (name): %s", name)
+		return "", fmt.Errorf("ambiguous template (name): %s", name)
 	}
 	return nameMatches[0].TemplateID, nil
 }
@@ -735,7 +735,7 @@ func (c *Client) TriggerCreate(ctx context.Context, description, expression, pri
 		return "", err
 	}
 	if len(result.TriggerIDs) == 0 {
-		return "", errors.New("trigger.create n'a retourné aucun triggerid")
+		return "", errors.New("trigger.create returned no triggerid")
 	}
 	return result.TriggerIDs[0], nil
 }
@@ -770,6 +770,117 @@ func (c *Client) TriggerUpdate(ctx context.Context, id, description, expression,
 func (c *Client) TriggerDelete(ctx context.Context, id string) error {
 	var ignored any
 	return c.callAuth(ctx, "trigger.delete", []string{id}, &ignored)
+}
+
+// Item: 0=Zabbix agent, 1=SNMPv1, 2=SNMPv2c, 3=SNMPv3...
+// ValueType : 0=float, 1=str, 2=log, 3=unsigned, 4=text
+type Item struct {
+	ItemID    string `json:"itemid"`
+	HostID    string `json:"hostid"`
+	Name      string `json:"name"`
+	Key       string `json:"key_"`
+	Type      int    `json:"type"`
+	ValueType int    `json:"value_type"`
+	SNMPOid   string `json:"snmp_oid"`
+	Units     string `json:"units"`
+	Delay     string `json:"delay"`
+	History   string `json:"history"`
+	Trends    string `json:"trends"`
+	DelayFlex string `json:"delay_flex"`
+	Status    string `json:"status"` // 0=enabled, 1=disabled
+}
+
+type ItemCreateRequest struct {
+	HostID    string
+	Name      string
+	Key       string
+	Type      int    // 2 = SNMPv2 agent
+	ValueType int    // 3 = unsigned
+	SNMPOid   string
+	Units     string
+	Delay     string // ex: "10m", "60s"
+	History   string // ex: "90d"
+	Trends    string // ex: "365d"
+	DelayFlex string // ex: "50s;1-7,00:00-24:00"
+	Enabled   bool
+}
+
+func (c *Client) ItemCreate(ctx context.Context, req ItemCreateRequest) (string, error) {
+	params := map[string]any{
+		"hostid":     req.HostID,
+		"name":       req.Name,
+		"key_":       req.Key,
+		"type":       req.Type,
+		"value_type": req.ValueType,
+		"delay":      req.Delay,
+		"history":   req.History,
+		"trends":    req.Trends,
+		"status":    strconv.Itoa(boolToStatus(req.Enabled)),
+	}
+	if req.SNMPOid != "" {
+		params["snmp_oid"] = req.SNMPOid
+	}
+	if req.Units != "" {
+		params["units"] = req.Units
+	}
+	if req.DelayFlex != "" {
+		params["delay_flex"] = req.DelayFlex
+	}
+	var result struct {
+		ItemIDs []string `json:"itemids"`
+	}
+	if err := c.callAuth(ctx, "item.create", params, &result); err != nil {
+		return "", err
+	}
+	if len(result.ItemIDs) == 0 {
+		return "", errors.New("item.create returned no itemid")
+	}
+	return result.ItemIDs[0], nil
+}
+
+func (c *Client) ItemGetByID(ctx context.Context, id string) (*Item, error) {
+	params := map[string]any{
+		"itemids": []string{id},
+		"output":  []string{"itemid", "hostid", "name", "key_", "type", "value_type", "snmp_oid", "units", "delay", "history", "trends", "delay_flex", "status"},
+	}
+	var items []Item
+	if err := c.callAuth(ctx, "item.get", params, &items); err != nil {
+		return nil, err
+	}
+	if len(items) == 0 {
+		return nil, ErrNotFound
+	}
+	return &items[0], nil
+}
+
+func (c *Client) ItemUpdate(ctx context.Context, itemID string, req ItemCreateRequest) error {
+	params := map[string]any{
+		"itemid":     itemID,
+		"name":       req.Name,
+		"key_":       req.Key,
+		"type":       req.Type,
+		"value_type": req.ValueType,
+		"delay":      req.Delay,
+		"history":    req.History,
+		"trends":     req.Trends,
+		"status":    strconv.Itoa(boolToStatus(req.Enabled)),
+	}
+	if req.SNMPOid != "" {
+		params["snmp_oid"] = req.SNMPOid
+	}
+	if req.Units != "" {
+		params["units"] = req.Units
+	}
+	if req.DelayFlex != "" {
+		params["delay_flex"] = req.DelayFlex
+	}
+	var ignored any
+	return c.callAuth(ctx, "item.update", params, &ignored)
+}
+
+func (c *Client) ItemDelete(ctx context.Context, id string) error {
+	var ignored any
+	return c.callAuth(ctx, "item.delete", []string{id}, &ignored)
 }
 
 func StatusToEnabled(status string) bool {

@@ -38,7 +38,7 @@ func (r *hostGroupResource) Metadata(_ context.Context, req resource.MetadataReq
 
 func (r *hostGroupResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Ressource Zabbix host group.",
+		MarkdownDescription: "Zabbix host group resource.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed: true,
@@ -59,7 +59,7 @@ func (r *hostGroupResource) Configure(_ context.Context, req resource.ConfigureR
 	}
 	providerData, ok := req.ProviderData.(*providerData)
 	if !ok || providerData.Client == nil {
-		resp.Diagnostics.AddError("Provider invalide", "Client Zabbix indisponible.")
+		resp.Diagnostics.AddError("Invalid provider", "Zabbix client unavailable.")
 		return
 	}
 	r.client = providerData.Client
@@ -74,7 +74,7 @@ func (r *hostGroupResource) Create(ctx context.Context, req resource.CreateReque
 
 	id, err := r.client.HostGroupCreate(ctx, plan.Name.ValueString())
 	if err != nil {
-		resp.Diagnostics.AddError("Erreur hostgroup.create", err.Error())
+		resp.Diagnostics.AddError("hostgroup.create error", err.Error())
 		return
 	}
 
@@ -95,7 +95,7 @@ func (r *hostGroupResource) Read(ctx context.Context, req resource.ReadRequest, 
 			resp.State.RemoveResource(ctx)
 			return
 		}
-		resp.Diagnostics.AddError("Erreur hostgroup.get", err.Error())
+		resp.Diagnostics.AddError("hostgroup.get error", err.Error())
 		return
 	}
 
@@ -113,7 +113,7 @@ func (r *hostGroupResource) Update(ctx context.Context, req resource.UpdateReque
 	}
 
 	if err := r.client.HostGroupUpdate(ctx, state.ID.ValueString(), plan.Name.ValueString()); err != nil {
-		resp.Diagnostics.AddError("Erreur hostgroup.update", err.Error())
+		resp.Diagnostics.AddError("hostgroup.update error", err.Error())
 		return
 	}
 
@@ -129,7 +129,7 @@ func (r *hostGroupResource) Delete(ctx context.Context, req resource.DeleteReque
 	}
 	err := r.client.HostGroupDelete(ctx, state.ID.ValueString())
 	if err != nil && !zabbix.IsNotFound(err) {
-		resp.Diagnostics.AddError("Erreur hostgroup.delete", err.Error())
+		resp.Diagnostics.AddError("hostgroup.delete error", err.Error())
 	}
 }
 
