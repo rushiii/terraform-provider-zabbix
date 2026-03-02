@@ -67,7 +67,7 @@ func (r *hostResource) Metadata(_ context.Context, req resource.MetadataRequest,
 
 func (r *hostResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Zabbix host resource.",,
+		MarkdownDescription: "Zabbix host resource.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed: true,
