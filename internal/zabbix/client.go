@@ -806,13 +806,17 @@ type ItemCreateRequest struct {
 }
 
 func (c *Client) ItemCreate(ctx context.Context, req ItemCreateRequest) (string, error) {
+	delayParam := any(req.Delay)
+	if req.Delay == "0" {
+		delayParam = 0
+	}
 	params := map[string]any{
 		"hostid":     req.HostID,
 		"name":       req.Name,
 		"key_":       req.Key,
 		"type":       req.Type,
 		"value_type": req.ValueType,
-		"delay":      req.Delay,
+		"delay":      delayParam,
 		"history":   req.History,
 		"trends":    req.Trends,
 		"status":    strconv.Itoa(boolToStatus(req.Enabled)),
@@ -852,13 +856,17 @@ func (c *Client) ItemGetByID(ctx context.Context, id string) (*Item, error) {
 }
 
 func (c *Client) ItemUpdate(ctx context.Context, itemID string, req ItemCreateRequest) error {
+	delayParam := any(req.Delay)
+	if req.Delay == "0" {
+		delayParam = 0
+	}
 	params := map[string]any{
 		"itemid":     itemID,
 		"name":       req.Name,
 		"key_":       req.Key,
 		"type":       req.Type,
 		"value_type": req.ValueType,
-		"delay":      req.Delay,
+		"delay":      delayParam,
 		"history":    req.History,
 		"trends":     req.Trends,
 		"status":    strconv.Itoa(boolToStatus(req.Enabled)),
