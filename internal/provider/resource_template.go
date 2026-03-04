@@ -28,6 +28,7 @@ type templateResourceModel struct {
 	Host         types.String `tfsdk:"host"`
 	Name         types.String `tfsdk:"name"`
 	HostGroupIDs types.Set    `tfsdk:"host_group_ids"`
+	Macros       types.Map    `tfsdk:"macros"`
 }
 
 func NewTemplateResource() resource.Resource {
@@ -62,6 +63,12 @@ func (r *templateResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				ElementType:         types.StringType,
 				MarkdownDescription: "Group IDs to attach the template to.",
 			},
+			"macros": schema.MapAttribute{
+				Optional:            true,
+				Computed:            true,
+				ElementType:         types.StringType,
+				MarkdownDescription: "User macros for the template (e.g. `{\"{$SNMP_COMMUNITY}\" = \"public\"}`).",
+			},
 		},
 	}
 }
@@ -91,12 +98,14 @@ func (r *templateResource) Create(ctx context.Context, req resource.CreateReques
 		return
 	}
 
+	macros := templateMacrosFromPlan(plan.Macros)
+
 	name := plan.Host.ValueString()
 	if !plan.Name.IsNull() && plan.Name.ValueString() != "" {
 		name = plan.Name.ValueString()
 	}
 
-	id, err := r.client.TemplateCreate(ctx, plan.Host.ValueString(), name, groupIDs)
+	id, err := r.client.TemplateCreate(ctx, plan.Host.ValueString(), name, groupIDs, macros)
 	if err != nil {
 		resp.Diagnostics.AddError("template.create error", err.Error())
 		return
@@ -104,6 +113,7 @@ func (r *templateResource) Create(ctx context.Context, req resource.CreateReques
 
 	plan.ID = types.StringValue(id)
 	plan.Name = types.StringValue(name)
+	plan.Macros = templateMacrosToStateKnown(ctx, plan.Macros)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -131,6 +141,11 @@ func (r *templateResource) Read(ctx context.Context, req resource.ReadRequest, r
 	state.HostGroupIDs, _ = types.SetValueFrom(ctx, types.StringType, groupIDs)
 	state.Host = types.StringValue(template.Host)
 	state.Name = types.StringValue(template.Name)
+	macrosMap := make(map[string]string, len(template.Macros))
+	for _, x := range template.Macros {
+		macrosMap[x.Macro] = x.Value
+	}
+	state.Macros = templateMacrosToState(ctx, macrosMap)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
@@ -150,18 +165,21 @@ func (r *templateResource) Update(ctx context.Context, req resource.UpdateReques
 		return
 	}
 
+	macros := templateMacrosFromPlan(plan.Macros)
+
 	name := plan.Host.ValueString()
 	if !plan.Name.IsNull() && plan.Name.ValueString() != "" {
 		name = plan.Name.ValueString()
 	}
 
-	if err := r.client.TemplateUpdate(ctx, state.ID.ValueString(), plan.Host.ValueString(), name, groupIDs); err != nil {
+	if err := r.client.TemplateUpdate(ctx, state.ID.ValueString(), plan.Host.ValueString(), name, groupIDs, macros); err != nil {
 		resp.Diagnostics.AddError("template.update error", err.Error())
 		return
 	}
 
 	plan.ID = state.ID
 	plan.Name = types.StringValue(name)
+	plan.Macros = templateMacrosToStateKnown(ctx, plan.Macros)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -179,4 +197,45 @@ func (r *templateResource) Delete(ctx context.Context, req resource.DeleteReques
 
 func (r *templateResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+}
+
+// templateMacrosFromPlan returns a map for the API (macro name -> value); nil if plan macros are null or empty.
+func templateMacrosFromPlan(m types.Map) map[string]string {
+	if m.IsNull() || m.IsUnknown() || len(m.Elements()) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(m.Elements()))
+	for k, v := range m.Elements() {
+		key := k
+		if s, ok := v.(types.String); ok && !s.IsNull() {
+			out[key] = s.ValueString()
+		}
+	}
+	return out
+}
+
+// templateMacrosToState converts macro map to a Map attribute for state.
+func templateMacrosToState(ctx context.Context, m map[string]string) types.Map {
+	if len(m) == 0 {
+		return types.MapNull(types.StringType)
+	}
+	val, _ := types.MapValueFrom(ctx, types.StringType, m)
+	return val
+}
+
+// templateMacrosToStateKnown returns a known value for macros (never unknown) after Create/Update.
+func templateMacrosToStateKnown(ctx context.Context, planMacros types.Map) types.Map {
+	if !planMacros.IsNull() && !planMacros.IsUnknown() && len(planMacros.Elements()) > 0 {
+		out := make(map[string]string, len(planMacros.Elements()))
+		for k, v := range planMacros.Elements() {
+			if s, ok := v.(types.String); ok && !s.IsNull() {
+				out[k] = s.ValueString()
+			}
+		}
+		val, _ := types.MapValueFrom(ctx, types.StringType, out)
+		return val
+	}
+	// Known empty map (required: no unknown after apply).
+	val, _ := types.MapValueFrom(ctx, types.StringType, map[string]string{})
+	return val
 }

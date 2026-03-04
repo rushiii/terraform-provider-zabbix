@@ -10,6 +10,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64default"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
@@ -31,8 +32,8 @@ type itemResourceModel struct {
 	HostID    types.String `tfsdk:"host_id"`
 	Name      types.String `tfsdk:"name"`
 	Key       types.String `tfsdk:"key"`
-	Type      types.Int64  `tfsdk:"type"`       // 2 = SNMPv2 agent
-	ValueType types.Int64  `tfsdk:"value_type"` // 3 = unsigned
+	Type      types.Int64  `tfsdk:"type"`       
+	ValueType types.Int64  `tfsdk:"value_type"` 
 	SNMPOid   types.String `tfsdk:"snmp_oid"`
 	Units     types.String `tfsdk:"units"`
 	Delay     types.String `tfsdk:"delay"`
@@ -61,8 +62,11 @@ func (r *itemResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 				},
 			},
 			"host_id": schema.StringAttribute{
-				Required:            true,
-				MarkdownDescription: "ID of the host or template to attach the item to.",
+				Required: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
+				MarkdownDescription: "ID of the host or template to attach the item to. Changing this forces recreation.",
 			},
 			"name": schema.StringAttribute{
 				Required:            true,
@@ -73,10 +77,13 @@ func (r *itemResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 				MarkdownDescription: "Item key (e.g. epson.lamp.hours, agent.ping, icmpping).",
 			},
 			"type": schema.Int64Attribute{
-				Optional:            true,
-				Computed:            true,
-				Default:             int64default.StaticInt64(2),
-				MarkdownDescription: "Item type: 0=Zabbix agent, 1=SNMPv1, 2=SNMPv2c, 3=SNMPv3, 5=simple check (ICMP...).",
+				Optional: true,
+				Computed: true,
+				Default:  int64default.StaticInt64(0),
+				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.RequiresReplace(),
+				},
+				MarkdownDescription: "Item type (Zabbix 6.4): 0=Zabbix agent, 2=Zabbix trapper, 5=Simple check, 7=Zabbix agent (active), 20=SNMP agent. Changing this forces recreation.",
 			},
 			"value_type": schema.Int64Attribute{
 				Optional:            true,
@@ -192,6 +199,9 @@ func (r *itemResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 	state.ValueType = types.Int64Value(int64(item.ValueType))
 	if item.SNMPOid != "" {
 		state.SNMPOid = types.StringValue(item.SNMPOid)
+	} else if int64(item.Type) == zabbix.ItemTypeSNMPAgent && isNumericOIDString(item.Key) {
+		// Safety net: Zabbix may return empty snmp_oid for template SNMP items; reconstruct from key_.
+		state.SNMPOid = types.StringValue(item.Key)
 	} else {
 		state.SNMPOid = types.StringNull()
 	}
@@ -203,7 +213,11 @@ func (r *itemResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 	state.Delay = types.StringValue(item.Delay)
 	state.History = types.StringValue(item.History)
 	state.Trends = types.StringValue(item.Trends)
-	state.DelayFlex = types.StringValue(item.DelayFlex)
+	if item.DelayFlex != "" {
+		state.DelayFlex = types.StringValue(item.DelayFlex)
+	} else {
+		state.DelayFlex = types.StringNull()
+	}
 	state.Enabled = types.BoolValue(zabbix.StatusToEnabled(item.Status))
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
@@ -256,4 +270,24 @@ func (r *itemResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 
 func (r *itemResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+}
+
+func isNumericOIDString(value string) bool {
+	if value == "" {
+		return false
+	}
+	start := 0
+	if value[0] == '.' {
+		start = 1
+	}
+	if start >= len(value) {
+		return false
+	}
+	for i := start; i < len(value); i++ {
+		ch := value[i]
+		if (ch < '0' || ch > '9') && ch != '.' {
+			return false
+		}
+	}
+	return true
 }

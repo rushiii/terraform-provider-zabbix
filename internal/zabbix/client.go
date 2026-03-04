@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -26,6 +27,33 @@ var ErrNotFound = errors.New("zabbix object not found")
 
 func IsNotFound(err error) bool {
 	return errors.Is(err, ErrNotFound)
+}
+
+// FlexInt unmarshals from JSON string or number (Zabbix API may return either).
+type FlexInt int
+
+// FlexIntFrom converts an int to FlexInt.
+func FlexIntFrom(v int) FlexInt { return FlexInt(v) }
+
+func (v *FlexInt) UnmarshalJSON(data []byte) error {
+	if len(data) > 0 && data[0] == '"' {
+		var s string
+		if err := json.Unmarshal(data, &s); err != nil {
+			return err
+		}
+		n, err := strconv.Atoi(s)
+		if err != nil {
+			return err
+		}
+		*v = flexInt(n)
+		return nil
+	}
+	var n int
+	if err := json.Unmarshal(data, &n); err != nil {
+		return err
+	}
+	*v = flexInt(n)
+	return nil
 }
 
 type Auth struct {
@@ -152,7 +180,7 @@ func (c *Client) callAuth(ctx context.Context, method string, params interface{}
 }
 
 func (c *Client) call(ctx context.Context, method string, params interface{}, withAuth bool, out interface{}) error {
-	if method == "host.update" || method == "hostinterface.replacehostinterfaces" ||
+	if method == "host.create" || method == "host.update" || method == "hostinterface.replacehostinterfaces" ||
 		method == "hostinterface.update" || method == "hostinterface.create" || method == "hostinterface.delete" {
 		if b, err := json.Marshal(params); err == nil {
 			log.Printf("zabbix client debug: %s params=%s", method, string(b))
@@ -217,14 +245,15 @@ type Tag struct {
 }
 
 type SNMPDetails struct {
-	Version   int    `json:"version,omitempty"`
-	Community string `json:"community,omitempty"`
-	Security  string `json:"securityname,omitempty"`
-	AuthProto string `json:"authprotocol,omitempty"`
-	AuthPass  string `json:"authpassphrase,omitempty"`
-	PrivProto string `json:"privprotocol,omitempty"`
-	PrivPass  string `json:"privpassphrase,omitempty"`
-	Context   string `json:"contextname,omitempty"`
+	// Zabbix 6.4 returns version as a JSON string ("2"), flexInt handles both string and number.
+	Version   flexInt `json:"version,omitempty"`
+	Community string  `json:"community,omitempty"`
+	Security  string  `json:"securityname,omitempty"`
+	AuthProto string  `json:"authprotocol,omitempty"`
+	AuthPass  string  `json:"authpassphrase,omitempty"`
+	PrivProto string  `json:"privprotocol,omitempty"`
+	PrivPass  string  `json:"privpassphrase,omitempty"`
+	Context   string  `json:"contextname,omitempty"`
 }
 
 // parseInt accepts JSON number or string for Zabbix API compatibility (some versions return main/type/useip as string).
@@ -311,7 +340,7 @@ type HostInterface struct {
 	Main        int          `json:"main"`
 	UseIP       int          `json:"useip"`
 	IP          string       `json:"ip,omitempty"`
-	DNS         string       `json:"dns,omitempty"`
+	DNS         string       `json:"dns"` // API requires dns present (use "" when using IP)
 	Port        string       `json:"port,omitempty"`
 	Details     *SNMPDetails `json:"details,omitempty"`
 }
@@ -381,6 +410,74 @@ type HostCreateRequest struct {
 
 type HostUpdateRequest = HostCreateRequest
 
+// interfacesForHostCreate builds the interfaces payload for host.create so it matches Zabbix API expectations:
+// no interfaceid, dns always set, SNMP details with version/community/bulk.
+func interfacesForHostCreate(ifaces []HostInterface) []map[string]any {
+	out := make([]map[string]any, 0, len(ifaces))
+	for _, i := range ifaces {
+		m := map[string]any{
+			"type":  i.Type,
+			"main":  i.Main,
+			"useip": i.UseIP,
+			"ip":    i.IP,
+			"dns":   i.DNS,
+			"port":  i.Port,
+		}
+		if i.Type == 2 && i.Details != nil {
+			m["details"] = map[string]any{
+				"version":   int(i.Details.Version),
+				"community": i.Details.Community,
+				"bulk":      1,
+			}
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
+// interfacesForHostUpdate builds the interfaces payload for host.update: same as create but with
+// interfaceid set for existing interfaces (type,main) so the API updates in place and applies details.
+func interfacesForHostUpdate(ifaces []HostInterface, currentByTypeMain map[string]string) []map[string]any {
+	out := make([]map[string]any, 0, len(ifaces))
+	for _, i := range ifaces {
+		m := map[string]any{
+			"type":  i.Type,
+			"main":  i.Main,
+			"useip": i.UseIP,
+			"ip":    i.IP,
+			"dns":   i.DNS,
+			"port":  i.Port,
+		}
+		key := fmt.Sprintf("%d,%d", i.Type, i.Main)
+		if id := currentByTypeMain[key]; id != "" {
+			m["interfaceid"] = id
+		}
+		if i.Type == 2 && i.Details != nil {
+			m["details"] = map[string]any{
+				"version":   int(i.Details.Version),
+				"community": i.Details.Community,
+				"bulk":      1,
+			}
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
+// allInterfacesAreSNMP returns true if every interface is type 2 (SNMP). host.create fails with
+// "Incorrect arguments" when only SNMP interfaces are sent, so we use a workaround.
+func allInterfacesAreSNMP(ifaces []HostInterface) bool {
+	if len(ifaces) == 0 {
+		return false
+	}
+	for _, i := range ifaces {
+		if i.Type != 2 {
+			return false
+		}
+	}
+	return true
+}
+
 func (c *Client) HostCreate(ctx context.Context, req HostCreateRequest) (string, error) {
 	groups := make([]map[string]string, 0, len(req.GroupIDs))
 	for _, g := range req.GroupIDs {
@@ -392,19 +489,32 @@ func (c *Client) HostCreate(ctx context.Context, req HostCreateRequest) (string,
 		templates = append(templates, map[string]string{"templateid": t})
 	}
 
-	tags := req.Tags
-	if tags == nil {
-		tags = []Tag{}
+	interfacesToSend := req.Interfaces
+	skipTemplatesOnCreate := false
+	if allInterfacesAreSNMP(req.Interfaces) {
+		// Zabbix host.create rejects a single SNMP interface; create with temporary Agent then replace.
+		interfacesToSend = []HostInterface{{
+			Type:  1,
+			Main:  1,
+			UseIP: 1,
+			IP:    "127.0.0.1",
+			DNS:   "",
+			Port:  "10050",
+		}}
+		skipTemplatesOnCreate = true
 	}
+
 	params := map[string]any{
 		"host":       req.Host,
 		"name":       req.Name,
 		"status":     req.Status,
-		"interfaces": req.Interfaces,
+		"interfaces": interfacesForHostCreate(interfacesToSend),
 		"groups":     groups,
-		"tags":       tags,
 	}
-	if len(templates) > 0 {
+	if len(req.Tags) > 0 {
+		params["tags"] = req.Tags
+	}
+	if len(templates) > 0 && !skipTemplatesOnCreate {
 		params["templates"] = templates
 	}
 
@@ -417,7 +527,49 @@ func (c *Client) HostCreate(ctx context.Context, req HostCreateRequest) (string,
 	if len(result.HostIDs) == 0 {
 		return "", errors.New("host.create returned no hostid")
 	}
-	return result.HostIDs[0], nil
+	hostID := result.HostIDs[0]
+
+	if allInterfacesAreSNMP(req.Interfaces) {
+		curHost, err := c.HostGetByID(ctx, hostID)
+		if err != nil {
+			return "", fmt.Errorf("host.get after create: %w", err)
+		}
+		var ignored any
+		for _, iface := range curHost.Interfaces {
+			if err := c.callAuth(ctx, "hostinterface.delete", []string{iface.InterfaceID}, &ignored); err != nil {
+				return "", fmt.Errorf("hostinterface.delete (temp): %w", err)
+			}
+		}
+		for _, i := range req.Interfaces {
+			payload := map[string]any{
+				"hostid": hostID,
+				"type":   i.Type,
+				"main":   i.Main,
+				"useip":  i.UseIP,
+				"ip":     i.IP,
+				"dns":    i.DNS,
+				"port":   i.Port,
+			}
+			if i.Details != nil {
+				payload["details"] = map[string]any{
+					"version":   int(i.Details.Version),
+					"community": i.Details.Community,
+					"bulk":      1,
+				}
+			}
+			if err := c.callAuth(ctx, "hostinterface.create", payload, &ignored); err != nil {
+				return "", fmt.Errorf("hostinterface.create (SNMP): %w", err)
+			}
+		}
+		if len(templates) > 0 {
+			updateParams := map[string]any{"hostid": hostID, "templates": templates}
+			if err := c.callAuth(ctx, "host.update", updateParams, &ignored); err != nil {
+				return "", fmt.Errorf("host.update (templates): %w", err)
+			}
+		}
+	}
+
+	return hostID, nil
 }
 
 func (c *Client) HostGetByID(ctx context.Context, hostID string) (*Host, error) {
@@ -441,6 +593,17 @@ func (c *Client) HostGetByID(ctx context.Context, hostID string) (*Host, error) 
 }
 
 func (c *Client) HostUpdate(ctx context.Context, hostID string, req HostUpdateRequest) error {
+	// Get current host first so we have interfaceids for existing interfaces (type,main).
+	curHost, err := c.HostGetByID(ctx, hostID)
+	if err != nil {
+		return fmt.Errorf("host.get (interfaces): %w", err)
+	}
+	currentByTypeMain := make(map[string]string)
+	for _, iface := range curHost.Interfaces {
+		key := fmt.Sprintf("%d,%d", iface.Type, iface.Main)
+		currentByTypeMain[key] = iface.InterfaceID
+	}
+
 	groups := make([]map[string]string, 0, len(req.GroupIDs))
 	for _, g := range req.GroupIDs {
 		groups = append(groups, map[string]string{"groupid": g})
@@ -456,11 +619,12 @@ func (c *Client) HostUpdate(ctx context.Context, hostID string, req HostUpdateRe
 		tags = []Tag{}
 	}
 	params := map[string]any{
-		"hostid": hostID,
-		"host":   req.Host,
-		"status": strconv.Itoa(req.Status),
-		"groups": groups,
-		"tags":   tags,
+		"hostid":     hostID,
+		"host":       req.Host,
+		"status":     strconv.Itoa(req.Status),
+		"groups":     groups,
+		"tags":       tags,
+		"interfaces": interfacesForHostUpdate(req.Interfaces, currentByTypeMain),
 	}
 	if req.Name != "" {
 		params["name"] = req.Name
@@ -472,54 +636,6 @@ func (c *Client) HostUpdate(ctx context.Context, hostID string, req HostUpdateRe
 	var ignored any
 	if err := c.callAuth(ctx, "host.update", params, &ignored); err != nil {
 		return fmt.Errorf("host.update: %w", err)
-	}
-
-	// Get current interfaces for update (avoid replace which breaks linked items).
-	curHost, err := c.HostGetByID(ctx, hostID)
-	if err != nil {
-		return fmt.Errorf("host.get (interfaces): %w", err)
-	}
-	currentByTypeMain := make(map[string]string) // "(type,main)" -> interfaceid
-	for _, iface := range curHost.Interfaces {
-		key := fmt.Sprintf("%d,%d", iface.Type, iface.Main)
-		currentByTypeMain[key] = iface.InterfaceID
-	}
-
-	matched := make(map[string]bool) // interfaceid déjà associé à une interface souhaitée
-
-	for _, iface := range req.Interfaces {
-		key := fmt.Sprintf("%d,%d", iface.Type, iface.Main)
-		interfaceID, exists := currentByTypeMain[key]
-		payload := map[string]any{
-			"type":  iface.Type,
-			"main":  iface.Main,
-			"useip": iface.UseIP,
-			"ip":    iface.IP,
-			"dns":   iface.DNS,
-			"port":  iface.Port,
-		}
-		if exists && interfaceID != "" {
-			payload["interfaceid"] = interfaceID
-			if err := c.callAuth(ctx, "hostinterface.update", payload, &ignored); err != nil {
-				return fmt.Errorf("hostinterface.update: %w", err)
-			}
-			matched[interfaceID] = true
-		} else {
-			payload["hostid"] = hostID
-			if err := c.callAuth(ctx, "hostinterface.create", payload, &ignored); err != nil {
-				return fmt.Errorf("hostinterface.create: %w", err)
-			}
-		}
-	}
-
-	// Remove current interfaces that are no longer in the config.
-	for _, iface := range curHost.Interfaces {
-		if matched[iface.InterfaceID] {
-			continue
-		}
-		if err := c.callAuth(ctx, "hostinterface.delete", []string{iface.InterfaceID}, &ignored); err != nil {
-			return fmt.Errorf("hostinterface.delete: %w", err)
-		}
 	}
 	return nil
 }
@@ -603,9 +719,13 @@ type Template struct {
 	Groups     []struct {
 		GroupID string `json:"groupid"`
 	} `json:"groups"`
+	Macros []struct {
+		Macro string `json:"macro"`
+		Value string `json:"value"`
+	} `json:"macros"`
 }
 
-func (c *Client) TemplateCreate(ctx context.Context, host, name string, groupIDs []string) (string, error) {
+func (c *Client) TemplateCreate(ctx context.Context, host, name string, groupIDs []string, macros map[string]string) (string, error) {
 	groups := make([]map[string]string, 0, len(groupIDs))
 	for _, g := range groupIDs {
 		groups = append(groups, map[string]string{"groupid": g})
@@ -614,6 +734,13 @@ func (c *Client) TemplateCreate(ctx context.Context, host, name string, groupIDs
 		"host":   host,
 		"name":   name,
 		"groups": groups,
+	}
+	if len(macros) > 0 {
+		macrosArr := make([]map[string]string, 0, len(macros))
+		for k, v := range macros {
+			macrosArr = append(macrosArr, map[string]string{"macro": k, "value": v})
+		}
+		params["macros"] = macrosArr
 	}
 	var result struct {
 		TemplateIDs []string `json:"templateids"`
@@ -629,9 +756,10 @@ func (c *Client) TemplateCreate(ctx context.Context, host, name string, groupIDs
 
 func (c *Client) TemplateGetByID(ctx context.Context, id string) (*Template, error) {
 	params := map[string]any{
-		"templateids":  []string{id},
+		"templateids":   []string{id},
 		"output":       []string{"templateid", "host", "name"},
 		"selectGroups": []string{"groupid"},
+		"selectMacros":  "extend",
 	}
 	var templates []Template
 	if err := c.callAuth(ctx, "template.get", params, &templates); err != nil {
@@ -693,7 +821,7 @@ func (c *Client) templateIDByName(ctx context.Context, name string) (string, err
 	return nameMatches[0].TemplateID, nil
 }
 
-func (c *Client) TemplateUpdate(ctx context.Context, id, host, name string, groupIDs []string) error {
+func (c *Client) TemplateUpdate(ctx context.Context, id, host, name string, groupIDs []string, macros map[string]string) error {
 	groups := make([]map[string]string, 0, len(groupIDs))
 	for _, g := range groupIDs {
 		groups = append(groups, map[string]string{"groupid": g})
@@ -703,6 +831,13 @@ func (c *Client) TemplateUpdate(ctx context.Context, id, host, name string, grou
 		"host":       host,
 		"name":       name,
 		"groups":     groups,
+	}
+	if len(macros) > 0 {
+		macrosArr := make([]map[string]string, 0, len(macros))
+		for k, v := range macros {
+			macrosArr = append(macrosArr, map[string]string{"macro": k, "value": v})
+		}
+		params["macros"] = macrosArr
 	}
 	var ignored any
 	return c.callAuth(ctx, "template.update", params, &ignored)
@@ -742,8 +877,9 @@ func (c *Client) TriggerCreate(ctx context.Context, description, expression, pri
 
 func (c *Client) TriggerGetByID(ctx context.Context, id string) (*Trigger, error) {
 	params := map[string]any{
-		"triggerids": []string{id},
-		"output":     []string{"triggerid", "description", "expression", "priority", "status"},
+		"triggerids":        []string{id},
+		"output":            []string{"triggerid", "description", "expression", "priority", "status"},
+		"expandExpression":  true, // return last(/Host/key) instead of {itemid} to avoid config drift
 	}
 	var triggers []Trigger
 	if err := c.callAuth(ctx, "trigger.get", params, &triggers); err != nil {
@@ -775,19 +911,19 @@ func (c *Client) TriggerDelete(ctx context.Context, id string) error {
 // Item: 0=Zabbix agent, 1=SNMPv1, 2=SNMPv2c, 3=SNMPv3...
 // ValueType : 0=float, 1=str, 2=log, 3=unsigned, 4=text
 type Item struct {
-	ItemID    string `json:"itemid"`
-	HostID    string `json:"hostid"`
-	Name      string `json:"name"`
-	Key       string `json:"key_"`
-	Type      int    `json:"type"`
-	ValueType int    `json:"value_type"`
-	SNMPOid   string `json:"snmp_oid"`
-	Units     string `json:"units"`
-	Delay     string `json:"delay"`
-	History   string `json:"history"`
-	Trends    string `json:"trends"`
-	DelayFlex string `json:"delay_flex"`
-	Status    string `json:"status"` // 0=enabled, 1=disabled
+	ItemID    string  `json:"itemid"`
+	HostID    string  `json:"hostid"`
+	Name      string  `json:"name"`
+	Key       string  `json:"key_"`
+	Type      flexInt `json:"type"`
+	ValueType flexInt `json:"value_type"`
+	SNMPOid   string  `json:"snmp_oid"`
+	Units     string  `json:"units"`
+	Delay     string  `json:"delay"`
+	History   string  `json:"history"`
+	Trends    string  `json:"trends"`
+	DelayFlex string  `json:"delay_flex"`
+	Status    string  `json:"status"` // 0=enabled, 1=disabled
 }
 
 type ItemCreateRequest struct {
@@ -803,6 +939,39 @@ type ItemCreateRequest struct {
 	Trends    string // ex: "365d"
 	DelayFlex string // ex: "50s;1-7,00:00-24:00"
 	Enabled   bool
+}
+
+// Host interface type constants (Zabbix API).
+const (
+	HostInterfaceAgent = 1
+	HostInterfaceSNMP  = 2
+	HostInterfaceIPMI  = 3
+	HostInterfaceJMX   = 4
+)
+
+
+const (
+	ItemTypeZabbixAgent = 0
+	ItemTypeTrapper     = 2
+	ItemTypeSNMPAgent   = 20
+)
+
+func (c *Client) getSNMPInterfaceIDForItem(ctx context.Context, hostID string) (string, error) {
+	host, err := c.HostGetByID(ctx, hostID)
+	if err != nil {
+		if IsNotFound(err) {
+			// It's a template (templates are not returned by host.get) - no interface needed.
+			return "0", nil
+		}
+		return "", err
+	}
+	for _, iface := range host.Interfaces {
+		if iface.Type == HostInterfaceSNMP {
+			return iface.InterfaceID, nil
+		}
+	}
+	// Host exists but has no SNMP interface - use "0".
+	return "0", nil
 }
 
 func (c *Client) ItemCreate(ctx context.Context, req ItemCreateRequest) (string, error) {
@@ -821,13 +990,23 @@ func (c *Client) ItemCreate(ctx context.Context, req ItemCreateRequest) (string,
 		"trends":    req.Trends,
 		"status":    strconv.Itoa(boolToStatus(req.Enabled)),
 	}
-	if req.SNMPOid != "" {
-		params["snmp_oid"] = req.SNMPOid
-	}
 	if req.Units != "" {
 		params["units"] = req.Units
 	}
-	// Zabbix 6.4+ does not accept delay_flex in item.create; custom intervals are configured differently.
+	// SNMP agent (type 20 in Zabbix 6.4+): send snmp_oid and interfaceid.
+	// interfaceid is "0" for templates (no interface), or the real SNMP interface ID for hosts.
+	if req.Type == ItemTypeSNMPAgent {
+		snmpOID := strings.TrimSpace(req.SNMPOid)
+		if snmpOID == "" {
+			return "", errors.New("snmp_oid is required for SNMP agent items (type 20)")
+		}
+		params["snmp_oid"] = snmpOID
+		interfaceID, err := c.getSNMPInterfaceIDForItem(ctx, req.HostID)
+		if err != nil {
+			return "", fmt.Errorf("could not resolve SNMP interface: %w", err)
+		}
+		params["interfaceid"] = interfaceID
+	}
 	var result struct {
 		ItemIDs []string `json:"itemids"`
 	}
@@ -871,13 +1050,22 @@ func (c *Client) ItemUpdate(ctx context.Context, itemID string, req ItemCreateRe
 		"trends":     req.Trends,
 		"status":    strconv.Itoa(boolToStatus(req.Enabled)),
 	}
-	if req.SNMPOid != "" {
-		params["snmp_oid"] = req.SNMPOid
-	}
 	if req.Units != "" {
 		params["units"] = req.Units
 	}
-	// Zabbix 6.4+ does not accept delay_flex in item.update.
+	// SNMP agent (type 20 in Zabbix 6.4+): send snmp_oid and interfaceid.
+	if req.Type == ItemTypeSNMPAgent {
+		snmpOID := strings.TrimSpace(req.SNMPOid)
+		if snmpOID == "" {
+			return errors.New("snmp_oid is required for SNMP agent items (type 20)")
+		}
+		params["snmp_oid"] = snmpOID
+		interfaceID, err := c.getSNMPInterfaceIDForItem(ctx, req.HostID)
+		if err != nil {
+			return fmt.Errorf("could not resolve SNMP interface: %w", err)
+		}
+		params["interfaceid"] = interfaceID
+	}
 	var ignored any
 	return c.callAuth(ctx, "item.update", params, &ignored)
 }
@@ -901,3 +1089,4 @@ func boolToStatus(enabled bool) int {
 	}
 	return 1
 }
+

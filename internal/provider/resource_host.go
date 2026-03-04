@@ -379,8 +379,18 @@ func nullOrString(value string) types.String {
 }
 
 func setToStrings(ctx context.Context, value types.Set) ([]string, diag.Diagnostics) {
-	var out []string
-	diags := value.ElementsAs(ctx, &out, false)
+	var elems []types.String
+	diags := value.ElementsAs(ctx, &elems, true)
+	if diags.HasError() {
+		return nil, diags
+	}
+	out := make([]string, 0, len(elems))
+	for _, e := range elems {
+		if e.IsNull() || e.IsUnknown() {
+			continue
+		}
+		out = append(out, e.ValueString())
+	}
 	return out, diags
 }
 
@@ -573,7 +583,7 @@ func flattenInterfaces(interfaces []zabbix.HostInterface) []hostInterfaceModel {
 			DNS:   nullOrString(it.DNS),
 			Port:  types.StringValue(it.Port),
 		})
-		if it.Details != nil {
+		if it.Type == 2 && it.Details != nil && int(it.Details.Version) != 0 {
 			out[len(out)-1].SNMPDetails = &hostSNMPDetailsModel{
 				Version:   types.Int64Value(int64(it.Details.Version)),
 				Community: nullOrString(it.Details.Community),
@@ -602,7 +612,7 @@ func expandSNMPDetails(in *hostSNMPDetailsModel) *zabbix.SNMPDetails {
 	}
 
 	return &zabbix.SNMPDetails{
-		Version:   version,
+		Version:   zabbix.FlexIntFrom(version),
 		Community: community,
 	}
 }
