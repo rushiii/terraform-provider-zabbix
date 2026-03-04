@@ -1137,16 +1137,20 @@ type Action struct {
 		OpmessageGrp  []struct {
 			UsrgrpID string `json:"usrgrpid"`
 		} `json:"opmessage_grp,omitempty"`
+		OpmessageUsr []struct {
+			UserID string `json:"userid"`
+		} `json:"opmessage_usr,omitempty"`
 		Opmessage *struct {
 			DefaultMsg string `json:"default_msg"`
 		} `json:"opmessage,omitempty"`
 	} `json:"operations"`
 }
 
-// ActionCreateRequest for trigger-based action (send message to user groups).
+// ActionCreateRequest for trigger-based action (send message to user groups and/or users).
 type ActionCreateRequest struct {
 	Name              string
 	UserGroupIDs      []string // usrgrpid list
+	UserIDs           []string // optional: userid list (e.g. fst-audiovisuel)
 	Subject           string   // def_shortdata
 	Message           string   // def_longdata
 	Enabled           bool
@@ -1181,13 +1185,21 @@ func (c *Client) ActionCreate(ctx context.Context, req ActionCreateRequest) (str
 	for _, gid := range req.UserGroupIDs {
 		opmessageGrp = append(opmessageGrp, map[string]string{"usrgrpid": gid})
 	}
-	operations := []map[string]any{
-		{
-			"operationtype":  "0",
-			"opmessage_grp":  opmessageGrp,
-			"opmessage":      map[string]string{"default_msg": "1"},
-		},
+	opmessageUsr := make([]map[string]string, 0, len(req.UserIDs))
+	for _, uid := range req.UserIDs {
+		if uid != "" {
+			opmessageUsr = append(opmessageUsr, map[string]string{"userid": uid})
+		}
 	}
+	op := map[string]any{
+		"operationtype": "0",
+		"opmessage_grp": opmessageGrp,
+		"opmessage":     map[string]string{"default_msg": "1"},
+	}
+	if len(opmessageUsr) > 0 {
+		op["opmessage_usr"] = opmessageUsr
+	}
+	operations := []map[string]any{op}
 	status := "1"
 	if req.Enabled {
 		status = "0"
@@ -1261,13 +1273,21 @@ func (c *Client) ActionUpdate(ctx context.Context, id string, req ActionCreateRe
 	for _, gid := range req.UserGroupIDs {
 		opmessageGrp = append(opmessageGrp, map[string]string{"usrgrpid": gid})
 	}
-	operations := []map[string]any{
-		{
-			"operationtype": "0",
-			"opmessage_grp": opmessageGrp,
-			"opmessage":     map[string]string{"default_msg": "1"},
-		},
+	opmessageUsr := make([]map[string]string, 0, len(req.UserIDs))
+	for _, uid := range req.UserIDs {
+		if uid != "" {
+			opmessageUsr = append(opmessageUsr, map[string]string{"userid": uid})
+		}
 	}
+	op := map[string]any{
+		"operationtype": "0",
+		"opmessage_grp": opmessageGrp,
+		"opmessage":     map[string]string{"default_msg": "1"},
+	}
+	if len(opmessageUsr) > 0 {
+		op["opmessage_usr"] = opmessageUsr
+	}
+	operations := []map[string]any{op}
 	status := "1"
 	if req.Enabled {
 		status = "0"

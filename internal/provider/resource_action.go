@@ -30,6 +30,7 @@ type actionResourceModel struct {
 	ID              types.String `tfsdk:"id"`
 	Name            types.String `tfsdk:"name"`
 	UserGroupIDs    types.Set    `tfsdk:"user_group_ids"`
+	UserIDs         types.Set    `tfsdk:"user_ids"`
 	HostGroupIDs    types.Set    `tfsdk:"host_group_ids"`
 	TriggerNameLike types.Set    `tfsdk:"trigger_name_like"`
 	Subject         types.String `tfsdk:"subject"`
@@ -64,6 +65,11 @@ func (r *actionResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				Required:            true,
 				ElementType:         types.StringType,
 				MarkdownDescription: "IDs of user groups to notify (e.g. Zabbix administrators). Use data source or variable.",
+			},
+			"user_ids": schema.SetAttribute{
+				Optional:            true,
+				ElementType:         types.StringType,
+				MarkdownDescription: "Optional: IDs of specific users to notify in addition to user groups (e.g. fst-audiovisuel).",
 			},
 			"host_group_ids": schema.SetAttribute{
 				Optional:            true,
@@ -123,12 +129,14 @@ func (r *actionResource) Create(ctx context.Context, req resource.CreateRequest,
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	userIDs, _ := setToStringsOptional(ctx, plan.UserIDs)
 	hostGroupIDs, _ := setToStringsOptional(ctx, plan.HostGroupIDs)
 	triggerNameLike, _ := setToStringsOptional(ctx, plan.TriggerNameLike)
 
 	id, err := r.client.ActionCreate(ctx, zabbix.ActionCreateRequest{
 		Name:            plan.Name.ValueString(),
 		UserGroupIDs:    groupIDs,
+		UserIDs:         userIDs,
 		HostGroupIDs:    hostGroupIDs,
 		TriggerNameLike: triggerNameLike,
 		Subject:         plan.Subject.ValueString(),
@@ -177,14 +185,25 @@ func (r *actionResource) Read(ctx context.Context, req resource.ReadRequest, res
 	state.EscPeriod = types.StringValue(action.EscPeriod)
 
 	groupIDs := make([]string, 0)
+	userIDs := make([]string, 0)
 	for _, op := range action.Operations {
 		for _, g := range op.OpmessageGrp {
 			if g.UsrgrpID != "" {
 				groupIDs = append(groupIDs, g.UsrgrpID)
 			}
 		}
+		for _, u := range op.OpmessageUsr {
+			if u.UserID != "" {
+				userIDs = append(userIDs, u.UserID)
+			}
+		}
 	}
 	state.UserGroupIDs, _ = types.SetValueFrom(ctx, types.StringType, groupIDs)
+	if len(userIDs) > 0 {
+		state.UserIDs, _ = types.SetValueFrom(ctx, types.StringType, userIDs)
+	} else {
+		state.UserIDs = types.SetNull(types.StringType)
+	}
 
 	// Rebuild host_group_ids and trigger_name_like from conditions (type 0 = host group, 2/3 = trigger name).
 	conds := action.Conditions
@@ -234,12 +253,14 @@ func (r *actionResource) Update(ctx context.Context, req resource.UpdateRequest,
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	userIDs, _ := setToStringsOptional(ctx, plan.UserIDs)
 	hostGroupIDs, _ := setToStringsOptional(ctx, plan.HostGroupIDs)
 	triggerNameLike, _ := setToStringsOptional(ctx, plan.TriggerNameLike)
 
 	err := r.client.ActionUpdate(ctx, state.ID.ValueString(), zabbix.ActionCreateRequest{
 		Name:            plan.Name.ValueString(),
 		UserGroupIDs:    groupIDs,
+		UserIDs:         userIDs,
 		HostGroupIDs:    hostGroupIDs,
 		TriggerNameLike: triggerNameLike,
 		Subject:         plan.Subject.ValueString(),
@@ -272,10 +293,13 @@ func (r *actionResource) ImportState(ctx context.Context, req resource.ImportSta
 }
 
 // normalizeActionMessage rend le message canonique pour éviter la dérive avec le heredoc Terraform :
-// fin de ligne \n, pas d'espaces en fin de lignes, un seul newline final.
 func normalizeActionMessage(s string) string {
 	s = strings.ReplaceAll(s, "\r\n", "\n")
-	s = strings.TrimRight(s, " \t\n\r")
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		lines[i] = strings.TrimSpace(line)
+	}
+	s = strings.TrimRight(strings.Join(lines, "\n"), " \t\n\r")
 	if s != "" {
 		s += "\n"
 	}
