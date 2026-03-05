@@ -13,6 +13,21 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
+func setToStringsOptionalUserGroup(ctx context.Context, value types.Set) ([]string, error) {
+	if value.IsNull() || value.IsUnknown() {
+		return nil, nil
+	}
+	var list []types.String
+	if diag := value.ElementsAs(ctx, &list, false); diag.HasError() {
+		return nil, nil
+	}
+	out := make([]string, 0, len(list))
+	for _, s := range list {
+		out = append(out, s.ValueString())
+	}
+	return out, nil
+}
+
 var (
 	_ resource.Resource                = &userGroupResource{}
 	_ resource.ResourceWithConfigure   = &userGroupResource{}
@@ -24,8 +39,9 @@ type userGroupResource struct {
 }
 
 type userGroupResourceModel struct {
-	ID   types.String `tfsdk:"id"`
-	Name types.String `tfsdk:"name"`
+	ID                 types.String `tfsdk:"id"`
+	Name               types.String `tfsdk:"name"`
+	HostGroupReadIDs   types.Set    `tfsdk:"host_group_read_ids"`
 }
 
 func NewUserGroupResource() resource.Resource {
@@ -50,6 +66,11 @@ func (r *userGroupResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 				Required:            true,
 				MarkdownDescription: "Name of the user group.",
 			},
+			"host_group_read_ids": schema.SetAttribute{
+				Optional:            true,
+				ElementType:         types.StringType,
+				MarkdownDescription: "IDs of host groups to grant Read permission (\"Autorisation de l'hôte\" in Zabbix UI).",
+			},
 		},
 	}
 }
@@ -72,7 +93,8 @@ func (r *userGroupResource) Create(ctx context.Context, req resource.CreateReque
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	id, err := r.client.UserGroupCreate(ctx, plan.Name.ValueString())
+	readIDs, _ := setToStringsOptionalUserGroup(ctx, plan.HostGroupReadIDs)
+	id, err := r.client.UserGroupCreate(ctx, plan.Name.ValueString(), readIDs)
 	if err != nil {
 		resp.Diagnostics.AddError("usergroup.create error", err.Error())
 		return
@@ -108,7 +130,14 @@ func (r *userGroupResource) Update(ctx context.Context, req resource.UpdateReque
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if err := r.client.UserGroupUpdate(ctx, state.ID.ValueString(), plan.Name.ValueString()); err != nil {
+	var readIDs []string
+	if !plan.HostGroupReadIDs.IsNull() {
+		readIDs, _ = setToStringsOptionalUserGroup(ctx, plan.HostGroupReadIDs)
+		if readIDs == nil {
+			readIDs = []string{}
+		}
+	}
+	if err := r.client.UserGroupUpdate(ctx, state.ID.ValueString(), plan.Name.ValueString(), readIDs); err != nil {
 		resp.Diagnostics.AddError("usergroup.update error", err.Error())
 		return
 	}

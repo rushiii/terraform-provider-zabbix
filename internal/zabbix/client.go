@@ -1319,12 +1319,17 @@ func (c *Client) ActionDelete(ctx context.Context, id string) error {
 type UserGroup struct {
 	UsrgrpID string `json:"usrgrpid"`
 	Name     string `json:"name"`
+	Rights   []struct {
+		ID         string `json:"id"`         // host group id
+		Permission string `json:"permission"` // "2"=Read, "3"=Read-write
+	} `json:"rights,omitempty"`
 }
 
 func (c *Client) UserGroupGetByID(ctx context.Context, id string) (*UserGroup, error) {
 	params := map[string]any{
-		"usrgrpids": []string{id},
-		"output":    []string{"usrgrpid", "name"},
+		"usrgrpids":     []string{id},
+		"output":        []string{"usrgrpid", "name"},
+		"selectRights":  "extend",
 	}
 	var groups []UserGroup
 	if err := c.callAuth(ctx, "usergroup.get", params, &groups); err != nil {
@@ -1359,8 +1364,22 @@ func (c *Client) UserGroupIDsByNames(ctx context.Context, names []string) ([]str
 	return out, nil
 }
 
-func (c *Client) UserGroupCreate(ctx context.Context, name string) (string, error) {
+// Permission for host group access: "2" = Read, "3" = Read-write
+const UsergroupPermissionRead = "2"
+
+func (c *Client) UserGroupCreate(ctx context.Context, name string, hostGroupReadIDs []string) (string, error) {
 	params := map[string]any{"name": name}
+	if len(hostGroupReadIDs) > 0 {
+		rights := make([]map[string]string, 0, len(hostGroupReadIDs))
+		for _, gid := range hostGroupReadIDs {
+			if gid != "" {
+				rights = append(rights, map[string]string{"id": gid, "permission": UsergroupPermissionRead})
+			}
+		}
+		if len(rights) > 0 {
+			params["rights"] = rights
+		}
+	}
 	var result struct {
 		UsrgrpIDs []string `json:"usrgrpids"`
 	}
@@ -1373,9 +1392,20 @@ func (c *Client) UserGroupCreate(ctx context.Context, name string) (string, erro
 	return result.UsrgrpIDs[0], nil
 }
 
-func (c *Client) UserGroupUpdate(ctx context.Context, id, name string) error {
+// UserGroupUpdate updates the user group. Pass nil for hostGroupReadIDs to leave rights unchanged.
+func (c *Client) UserGroupUpdate(ctx context.Context, id, name string, hostGroupReadIDs []string) error {
+	params := map[string]any{"usrgrpid": id, "name": name}
+	if hostGroupReadIDs != nil {
+		rights := make([]map[string]string, 0, len(hostGroupReadIDs))
+		for _, gid := range hostGroupReadIDs {
+			if gid != "" {
+				rights = append(rights, map[string]string{"id": gid, "permission": UsergroupPermissionRead})
+			}
+		}
+		params["rights"] = rights
+	}
 	var ignored any
-	return c.callAuth(ctx, "usergroup.update", map[string]any{"usrgrpid": id, "name": name}, &ignored)
+	return c.callAuth(ctx, "usergroup.update", params, &ignored)
 }
 
 func (c *Client) UserGroupDelete(ctx context.Context, id string) error {
@@ -1415,7 +1445,7 @@ func (c *Client) UserCreate(ctx context.Context, req UserCreateRequest) (string,
 			{
 				"mediatypeid": "1",
 				"sendto":      []string{req.Email},
-				"active":      0,
+				"active":      1,
 				"severity":    63,
 				"period":      "1-7,00:00-24:00",
 			},
@@ -1505,7 +1535,7 @@ func (c *Client) UserUpdate(ctx context.Context, userID string, req UserCreateRe
 			{
 				"mediatypeid": "1",
 				"sendto":      []string{req.Email},
-				"active":      0,
+				"active":      1,
 				"severity":    63,
 				"period":      "1-7,00:00-24:00",
 			},
