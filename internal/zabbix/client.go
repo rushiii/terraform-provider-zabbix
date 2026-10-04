@@ -78,6 +78,83 @@ type Client struct {
 	mu          sync.Mutex
 	sessionAuth string
 	rpcID       int64
+	version     *APIVersion
+}
+
+// APIVersion is the Zabbix API version reported by apiinfo.version (e.g. "7.4.2").
+type APIVersion struct {
+	Major int
+	Minor int
+}
+
+// AtLeast reports whether the version is >= major.minor.
+func (v APIVersion) AtLeast(major, minor int) bool {
+	if v.Major != major {
+		return v.Major > major
+	}
+	return v.Minor >= minor
+}
+
+func parseAPIVersion(raw string) (APIVersion, error) {
+	parts := strings.SplitN(strings.TrimSpace(raw), ".", 3)
+	if len(parts) < 2 {
+		return APIVersion{}, fmt.Errorf("unexpected Zabbix API version %q", raw)
+	}
+	major, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return APIVersion{}, fmt.Errorf("unexpected Zabbix API version %q", raw)
+	}
+	minor, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return APIVersion{}, fmt.Errorf("unexpected Zabbix API version %q", raw)
+	}
+	return APIVersion{Major: major, Minor: minor}, nil
+}
+
+// Version returns the Zabbix API version, querying apiinfo.version once and caching the result.
+func (c *Client) Version(ctx context.Context) (APIVersion, error) {
+	c.mu.Lock()
+	if c.version != nil {
+		v := *c.version
+		c.mu.Unlock()
+		return v, nil
+	}
+	c.mu.Unlock()
+
+	var raw string
+	if err := c.callNoAuth(ctx, "apiinfo.version", map[string]any{}, &raw); err != nil {
+		return APIVersion{}, err
+	}
+	v, err := parseAPIVersion(raw)
+	if err != nil {
+		return APIVersion{}, err
+	}
+
+	c.mu.Lock()
+	c.version = &v
+	c.mu.Unlock()
+	return v, nil
+}
+
+// usesAuthHeader: "Authorization: Bearer" is supported since 6.4, and the "auth" request field
+// was removed in 7.2.
+func (c *Client) usesAuthHeader(ctx context.Context) (bool, error) {
+	v, err := c.Version(ctx)
+	if err != nil {
+		return false, err
+	}
+	return v.AtLeast(6, 4), nil
+}
+
+// hasSeparateGroupTypes: since 6.2 host groups and template groups are distinct objects
+// (selectHostGroups/selectTemplateGroups, usergroup hostgroup_rights). The old selectGroups and
+// usergroup rights parameters were removed in 7.2.
+func (c *Client) hasSeparateGroupTypes(ctx context.Context) (bool, error) {
+	v, err := c.Version(ctx)
+	if err != nil {
+		return false, err
+	}
+	return v.AtLeast(6, 2), nil
 }
 
 type rpcRequest struct {
@@ -149,8 +226,17 @@ func (c *Client) ensureAuth(ctx context.Context) (string, error) {
 	}
 	c.mu.Unlock()
 
+	v, err := c.Version(ctx)
+	if err != nil {
+		return "", err
+	}
+	// user.login: "user" was renamed to "username" in 5.4.
+	userField := "username"
+	if !v.AtLeast(5, 4) {
+		userField = "user"
+	}
 	params := map[string]any{
-		"username": c.auth.Username,
+		userField:  c.auth.Username,
 		"password": c.auth.Password,
 	}
 
@@ -167,8 +253,8 @@ func (c *Client) ensureAuth(ctx context.Context) (string, error) {
 }
 
 func (c *Client) Ping(ctx context.Context) error {
-	var version string
-	return c.callNoAuth(ctx, "apiinfo.version", map[string]any{}, &version)
+	_, err := c.Version(ctx)
+	return err
 }
 
 func (c *Client) callNoAuth(ctx context.Context, method string, params interface{}, out interface{}) error {
@@ -193,12 +279,21 @@ func (c *Client) call(ctx context.Context, method string, params interface{}, wi
 		Params:  params,
 		ID:      c.nextID(),
 	}
+	bearer := ""
 	if withAuth {
 		token, err := c.ensureAuth(ctx)
 		if err != nil {
 			return err
 		}
-		requestBody.Auth = token
+		useHeader, err := c.usesAuthHeader(ctx)
+		if err != nil {
+			return err
+		}
+		if useHeader {
+			bearer = token
+		} else {
+			requestBody.Auth = token
+		}
 	}
 
 	rawReq, err := json.Marshal(requestBody)
@@ -211,6 +306,9 @@ func (c *Client) call(ctx context.Context, method string, params interface{}, wi
 		return err
 	}
 	httpReq.Header.Set("Content-Type", "application/json-rpc")
+	if bearer != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+bearer)
+	}
 
 	httpResp, err := c.httpClient.Do(httpReq)
 	if err != nil {
@@ -374,6 +472,11 @@ type hostJSON struct {
 		GroupID string `json:"groupid"`
 		Name    string `json:"name"`
 	} `json:"groups"`
+	// Zabbix 6.2+ (selectHostGroups).
+	HostGroups []struct {
+		GroupID string `json:"groupid"`
+		Name    string `json:"name"`
+	} `json:"hostgroups"`
 	ParentTemplates []struct {
 		TemplateID string `json:"templateid"`
 		Host       string `json:"host"`
@@ -393,6 +496,9 @@ func (h *Host) UnmarshalJSON(data []byte) error {
 	h.Status = parseString(raw.Status)
 	h.Interfaces = raw.Interfaces
 	h.Groups = raw.Groups
+	if len(raw.HostGroups) > 0 {
+		h.Groups = raw.HostGroups
+	}
 	h.ParentTemplates = raw.ParentTemplates
 	h.Tags = raw.Tags
 	return nil
@@ -573,13 +679,21 @@ func (c *Client) HostCreate(ctx context.Context, req HostCreateRequest) (string,
 }
 
 func (c *Client) HostGetByID(ctx context.Context, hostID string) (*Host, error) {
+	separateGroups, err := c.hasSeparateGroupTypes(ctx)
+	if err != nil {
+		return nil, err
+	}
 	params := map[string]any{
 		"hostids":               []string{hostID},
 		"output":                []string{"hostid", "host", "name", "status"},
 		"selectInterfaces":      "extend",
-		"selectGroups":          []string{"groupid", "name"},
 		"selectParentTemplates": []string{"templateid", "host", "name"},
 		"selectTags":            "extend",
+	}
+	if separateGroups {
+		params["selectHostGroups"] = []string{"groupid", "name"}
+	} else {
+		params["selectGroups"] = []string{"groupid", "name"}
 	}
 
 	var hosts []Host
@@ -719,6 +833,10 @@ type Template struct {
 	Groups     []struct {
 		GroupID string `json:"groupid"`
 	} `json:"groups"`
+	// Zabbix 6.2+ (selectTemplateGroups).
+	TemplateGroups []struct {
+		GroupID string `json:"groupid"`
+	} `json:"templategroups"`
 	Macros []struct {
 		Macro string `json:"macro"`
 		Value string `json:"value"`
@@ -755,11 +873,19 @@ func (c *Client) TemplateCreate(ctx context.Context, host, name string, groupIDs
 }
 
 func (c *Client) TemplateGetByID(ctx context.Context, id string) (*Template, error) {
+	separateGroups, err := c.hasSeparateGroupTypes(ctx)
+	if err != nil {
+		return nil, err
+	}
 	params := map[string]any{
-		"templateids":   []string{id},
+		"templateids":  []string{id},
 		"output":       []string{"templateid", "host", "name"},
-		"selectGroups": []string{"groupid"},
-		"selectMacros":  "extend",
+		"selectMacros": "extend",
+	}
+	if separateGroups {
+		params["selectTemplateGroups"] = []string{"groupid"}
+	} else {
+		params["selectGroups"] = []string{"groupid"}
 	}
 	var templates []Template
 	if err := c.callAuth(ctx, "template.get", params, &templates); err != nil {
@@ -768,7 +894,11 @@ func (c *Client) TemplateGetByID(ctx context.Context, id string) (*Template, err
 	if len(templates) == 0 {
 		return nil, ErrNotFound
 	}
-	return &templates[0], nil
+	t := &templates[0]
+	if len(t.TemplateGroups) > 0 {
+		t.Groups = t.TemplateGroups
+	}
+	return t, nil
 }
 
 func (c *Client) TemplateIDsByNames(ctx context.Context, names []string) ([]string, error) {
@@ -1022,7 +1152,7 @@ func (c *Client) ItemCreate(ctx context.Context, req ItemCreateRequest) (string,
 func (c *Client) ItemGetByID(ctx context.Context, id string) (*Item, error) {
 	params := map[string]any{
 		"itemids": []string{id},
-		"output":  []string{"itemid", "hostid", "name", "key_", "type", "value_type", "snmp_oid", "units", "delay", "history", "trends", "delay_flex", "status"},
+		"output":  []string{"itemid", "hostid", "name", "key_", "type", "value_type", "snmp_oid", "units", "delay", "history", "trends", "status"},
 	}
 	var items []Item
 	if err := c.callAuth(ctx, "item.get", params, &items); err != nil {
@@ -1323,13 +1453,39 @@ type UserGroup struct {
 		ID         string `json:"id"`         // host group id
 		Permission string `json:"permission"` // "2"=Read, "3"=Read-write
 	} `json:"rights,omitempty"`
+	// Zabbix 6.2+ (selectHostGroupRights).
+	HostGroupRights []struct {
+		ID         string `json:"id"`
+		Permission string `json:"permission"`
+	} `json:"hostgroup_rights,omitempty"`
+}
+
+// userGroupRightsField returns the usergroup parameter holding host group permissions:
+// "rights" before 6.2, "hostgroup_rights" since 6.2 ("rights" was removed in 7.2).
+func (c *Client) userGroupRightsField(ctx context.Context) (string, error) {
+	separateGroups, err := c.hasSeparateGroupTypes(ctx)
+	if err != nil {
+		return "", err
+	}
+	if separateGroups {
+		return "hostgroup_rights", nil
+	}
+	return "rights", nil
 }
 
 func (c *Client) UserGroupGetByID(ctx context.Context, id string) (*UserGroup, error) {
+	separateGroups, err := c.hasSeparateGroupTypes(ctx)
+	if err != nil {
+		return nil, err
+	}
 	params := map[string]any{
-		"usrgrpids":     []string{id},
-		"output":        []string{"usrgrpid", "name"},
-		"selectRights":  "extend",
+		"usrgrpids": []string{id},
+		"output":    []string{"usrgrpid", "name"},
+	}
+	if separateGroups {
+		params["selectHostGroupRights"] = "extend"
+	} else {
+		params["selectRights"] = "extend"
 	}
 	var groups []UserGroup
 	if err := c.callAuth(ctx, "usergroup.get", params, &groups); err != nil {
@@ -1338,7 +1494,11 @@ func (c *Client) UserGroupGetByID(ctx context.Context, id string) (*UserGroup, e
 	if len(groups) == 0 {
 		return nil, ErrNotFound
 	}
-	return &groups[0], nil
+	g := &groups[0]
+	if len(g.HostGroupRights) > 0 {
+		g.Rights = g.HostGroupRights
+	}
+	return g, nil
 }
 
 // UserGroupIDsByNames returns usergroup IDs for the given names (e.g. "Zabbix administrators").
@@ -1368,6 +1528,10 @@ func (c *Client) UserGroupIDsByNames(ctx context.Context, names []string) ([]str
 const UsergroupPermissionRead = "2"
 
 func (c *Client) UserGroupCreate(ctx context.Context, name string, hostGroupReadIDs []string) (string, error) {
+	rightsField, err := c.userGroupRightsField(ctx)
+	if err != nil {
+		return "", err
+	}
 	params := map[string]any{"name": name}
 	if len(hostGroupReadIDs) > 0 {
 		rights := make([]map[string]string, 0, len(hostGroupReadIDs))
@@ -1377,7 +1541,7 @@ func (c *Client) UserGroupCreate(ctx context.Context, name string, hostGroupRead
 			}
 		}
 		if len(rights) > 0 {
-			params["rights"] = rights
+			params[rightsField] = rights
 		}
 	}
 	var result struct {
@@ -1394,6 +1558,10 @@ func (c *Client) UserGroupCreate(ctx context.Context, name string, hostGroupRead
 
 // UserGroupUpdate updates the user group. Pass nil for hostGroupReadIDs to leave rights unchanged.
 func (c *Client) UserGroupUpdate(ctx context.Context, id, name string, hostGroupReadIDs []string) error {
+	rightsField, err := c.userGroupRightsField(ctx)
+	if err != nil {
+		return err
+	}
 	params := map[string]any{"usrgrpid": id, "name": name}
 	if hostGroupReadIDs != nil {
 		rights := make([]map[string]string, 0, len(hostGroupReadIDs))
@@ -1402,7 +1570,7 @@ func (c *Client) UserGroupUpdate(ctx context.Context, id, name string, hostGroup
 				rights = append(rights, map[string]string{"id": gid, "permission": UsergroupPermissionRead})
 			}
 		}
-		params["rights"] = rights
+		params[rightsField] = rights
 	}
 	var ignored any
 	return c.callAuth(ctx, "usergroup.update", params, &ignored)
