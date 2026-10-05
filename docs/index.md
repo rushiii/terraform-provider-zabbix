@@ -69,10 +69,16 @@ provider "zabbix" {
 - If `api_token` is empty, `username` and `password` are required.
 - If both `api_token` and `username/password` are set, the token still takes priority.
 
+## Zabbix compatibility
+
+Supported Zabbix versions: 6.0 LTS, 6.4, 7.0 LTS, 7.2, 7.4 and 8.0. The provider detects the server version and
+uses the matching API conventions (the `Authorization: Bearer` header from 6.4, `selectHostGroups` /
+`selectTemplateGroups` / `hostgroup_rights` from 6.2). Resource behavior is identical on every version.
+
 ## Configure-time validation
 
 During provider initialization:
 
 1. The HTTP/API client is initialized.
-2. An `apiinfo.version` ping is executed to verify API reachability.
+2. An `apiinfo.version` ping is executed to verify API reachability and detect the Zabbix version.
 3. If the check fails, planning/apply fails immediately.

@@ -30,6 +30,20 @@ Behavior:
 - If `api_token` is set, it has priority
 - If `api_token` is empty, `username` and `password` are required
 
+## Zabbix compatibility
+
+The provider detects the Zabbix API version at startup (`apiinfo.version`) and adapts its requests:
+
+| Zabbix version | Authentication | Host/template groups, user group permissions |
+|---|---|---|
+| < 6.2 | `auth` field in the JSON-RPC body | `selectGroups`, `rights` |
+| 6.2 | `auth` field in the JSON-RPC body | `selectHostGroups` / `selectTemplateGroups`, `hostgroup_rights` |
+| 6.4, 7.0 LTS, 7.2, 7.4, 8.0 | `Authorization: Bearer` header | `selectHostGroups` / `selectTemplateGroups`, `hostgroup_rights` |
+
+Zabbix 7.2 removed the `auth` request field and the `selectGroups` / `rights` parameters, which is why
+older provider versions fail on recent Zabbix servers with `unexpected parameter "auth"`.
+Resource behavior is the same on every supported version.
+
 ## Build
 
 ```bash
