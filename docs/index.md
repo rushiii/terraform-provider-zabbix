@@ -28,7 +28,7 @@ terraform {
   required_providers {
     zabbix = {
       source  = "rushiii/zabbix"
-      version = "1.0.0"
+      version = "1.1.0"
     }
   }
 }
