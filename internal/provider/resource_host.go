@@ -33,6 +33,7 @@ type hostResourceModel struct {
 	ID             types.String         `tfsdk:"id"`
 	Name           types.String         `tfsdk:"name"`
 	VisibleName    types.String         `tfsdk:"visible_name"`
+	Description    types.String         `tfsdk:"description"`
 	Enabled        types.Bool           `tfsdk:"enabled"`
 	HostGroupIDs   types.Set            `tfsdk:"host_group_ids"`
 	HostGroupNames types.Set            `tfsdk:"host_group_names"`
@@ -83,6 +84,14 @@ func (r *hostResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 			"visible_name": schema.StringAttribute{
 				Optional:            true,
 				MarkdownDescription: "Visible name (`name`) in Zabbix.",
+			},
+			"description": schema.StringAttribute{
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
+				MarkdownDescription: "Host description. When omitted, the description set in Zabbix is left unchanged.",
 			},
 			"enabled": schema.BoolAttribute{
 				Optional:            true,
@@ -231,6 +240,7 @@ func (r *hostResource) Create(ctx context.Context, req resource.CreateRequest, r
 	hostID, err := r.client.HostCreate(ctx, zabbix.HostCreateRequest{
 		Host:        plan.Name.ValueString(),
 		Name:        nullableString(plan.VisibleName),
+		Description: knownStringPtr(plan.Description),
 		Status:      boolToHostStatus(plan.Enabled),
 		Interfaces:  interfaces,
 		GroupIDs:    groupIDs,
@@ -243,6 +253,9 @@ func (r *hostResource) Create(ctx context.Context, req resource.CreateRequest, r
 	}
 
 	plan.ID = types.StringValue(hostID)
+	if plan.Description.IsUnknown() || plan.Description.IsNull() {
+		plan.Description = types.StringValue("")
+	}
 	plan.HostGroupIDs, _ = types.SetValueFrom(ctx, types.StringType, groupIDs)
 	plan.TemplateIDs, _ = types.SetValueFrom(ctx, types.StringType, templateIDs)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
@@ -267,6 +280,7 @@ func (r *hostResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 
 	state.Name = types.StringValue(host.Host)
 	state.VisibleName = nullOrString(host.Name)
+	state.Description = types.StringValue(host.Description)
 	state.Enabled = types.BoolValue(zabbix.StatusToEnabled(host.Status))
 	state.Interfaces = flattenInterfaces(host.Interfaces)
 
@@ -324,6 +338,7 @@ func (r *hostResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	err := r.client.HostUpdate(ctx, state.ID.ValueString(), zabbix.HostUpdateRequest{
 		Host:        plan.Name.ValueString(),
 		Name:        nullableString(plan.VisibleName),
+		Description: knownStringPtr(plan.Description),
 		Status:      boolToHostStatus(plan.Enabled),
 		Interfaces:  interfaces,
 		GroupIDs:    groupIDs,
@@ -336,6 +351,9 @@ func (r *hostResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	}
 
 	plan.ID = state.ID
+	if plan.Description.IsUnknown() || plan.Description.IsNull() {
+		plan.Description = state.Description
+	}
 	plan.HostGroupIDs, _ = types.SetValueFrom(ctx, types.StringType, groupIDs)
 	plan.TemplateIDs, _ = types.SetValueFrom(ctx, types.StringType, templateIDs)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
@@ -369,6 +387,15 @@ func nullableString(value types.String) string {
 		return ""
 	}
 	return value.ValueString()
+}
+
+// knownStringPtr returns nil for a null or unknown value, so the attribute is not sent to the API.
+func knownStringPtr(value types.String) *string {
+	if value.IsNull() || value.IsUnknown() {
+		return nil
+	}
+	v := value.ValueString()
+	return &v
 }
 
 func nullOrString(value string) types.String {

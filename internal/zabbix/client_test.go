@@ -75,7 +75,7 @@ func fakeZabbix(t *testing.T, version string, calls *[]recordedCall) *httptest.S
 					return
 				}
 			}
-			host := map[string]any{"hostid": "10", "host": "h", "name": "h", "status": "0", "interfaces": []any{}, "parentTemplates": []any{}, "tags": []any{}}
+			host := map[string]any{"hostid": "10", "host": "h", "name": "h", "status": "0", "description": "Serveur web principal", "interfaces": []any{}, "parentTemplates": []any{}, "tags": []any{}}
 			group := []any{map[string]any{"groupid": "2", "name": "Linux servers"}}
 			if _, ok := call.Params["selectHostGroups"]; ok {
 				host["hostgroups"] = group
@@ -152,6 +152,9 @@ func TestClientAcrossVersions(t *testing.T) {
 				if len(host.Groups) != 1 || host.Groups[0].GroupID != "2" || host.Groups[0].Name != "Linux servers" {
 					t.Fatalf("host groups not parsed: %+v", host.Groups)
 				}
+				if host.Description != "Serveur web principal" {
+					t.Fatalf("host description not parsed: %q", host.Description)
+				}
 				tpl, err := c.TemplateGetByID(ctx, "20")
 				if err != nil {
 					t.Fatalf("template.get: %v", err)
@@ -214,5 +217,44 @@ func TestParseAPIVersion(t *testing.T) {
 	}
 	if _, err := parseAPIVersion("garbage"); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestHostDescription(t *testing.T) {
+	var calls []recordedCall
+	srv := fakeZabbix(t, "7.4.0", &calls)
+	defer srv.Close()
+	c := newTestClient(t, srv.URL, Auth{Method: AuthToken, Token: "api-token"})
+	ctx := context.Background()
+	iface := []HostInterface{{Type: 1, Main: 1, UseIP: 1, IP: "10.0.0.1", Port: "10050"}}
+
+	desc := "Serveur web principal"
+	empty := ""
+	for _, tc := range []struct {
+		name string
+		desc *string
+		want any // nil: "description" must not be sent
+	}{
+		{"unset", nil, nil},
+		{"set", &desc, desc},
+		{"cleared", &empty, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls = nil
+			_, _ = c.HostCreate(ctx, HostCreateRequest{Host: "h", Interfaces: iface, GroupIDs: []string{"2"}, Description: tc.desc})
+			_ = c.HostUpdate(ctx, "10", HostUpdateRequest{Host: "h", Interfaces: iface, GroupIDs: []string{"2"}, Description: tc.desc})
+			for _, call := range calls {
+				if call.Method != "host.create" && call.Method != "host.update" {
+					continue
+				}
+				got, ok := call.Params["description"]
+				if tc.want == nil && ok {
+					t.Errorf("%s: description sent although unset: %v", call.Method, got)
+				}
+				if tc.want != nil && got != tc.want {
+					t.Errorf("%s: description = %v, want %v", call.Method, got, tc.want)
+				}
+			}
+		})
 	}
 }
