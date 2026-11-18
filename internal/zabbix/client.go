@@ -448,6 +448,8 @@ type Host struct {
 	Host   string `json:"host"`
 	Name   string `json:"name"`
 	Status string `json:"status"`
+	// Description is the host's free-text description.
+	Description string `json:"description"`
 
 	Interfaces []HostInterface `json:"interfaces"`
 	Groups     []struct {
@@ -467,6 +469,7 @@ type hostJSON struct {
 	Host     string      `json:"host"`
 	Name     string      `json:"name"`
 	Status   interface{} `json:"status"`  // API can return "0"/"1" or 0/1
+	Description string   `json:"description"`
 	Interfaces []HostInterface `json:"interfaces"`
 	Groups   []struct {
 		GroupID string `json:"groupid"`
@@ -494,6 +497,7 @@ func (h *Host) UnmarshalJSON(data []byte) error {
 	h.Host = raw.Host
 	h.Name = raw.Name
 	h.Status = parseString(raw.Status)
+	h.Description = raw.Description
 	h.Interfaces = raw.Interfaces
 	h.Groups = raw.Groups
 	if len(raw.HostGroups) > 0 {
@@ -508,6 +512,8 @@ type HostCreateRequest struct {
 	Host        string
 	Name        string
 	Status      int
+	// Description is sent only when non-nil, so an unset value leaves the host's description untouched.
+	Description *string
 	Interfaces  []HostInterface
 	GroupIDs    []string
 	TemplateIDs []string
@@ -620,6 +626,9 @@ func (c *Client) HostCreate(ctx context.Context, req HostCreateRequest) (string,
 	if len(req.Tags) > 0 {
 		params["tags"] = req.Tags
 	}
+	if req.Description != nil {
+		params["description"] = *req.Description
+	}
 	if len(templates) > 0 && !skipTemplatesOnCreate {
 		params["templates"] = templates
 	}
@@ -685,7 +694,7 @@ func (c *Client) HostGetByID(ctx context.Context, hostID string) (*Host, error) 
 	}
 	params := map[string]any{
 		"hostids":               []string{hostID},
-		"output":                []string{"hostid", "host", "name", "status"},
+		"output":                []string{"hostid", "host", "name", "status", "description"},
 		"selectInterfaces":      "extend",
 		"selectParentTemplates": []string{"templateid", "host", "name"},
 		"selectTags":            "extend",
@@ -742,6 +751,9 @@ func (c *Client) HostUpdate(ctx context.Context, hostID string, req HostUpdateRe
 	}
 	if req.Name != "" {
 		params["name"] = req.Name
+	}
+	if req.Description != nil {
+		params["description"] = *req.Description
 	}
 	if len(templates) > 0 {
 		params["templates"] = templates

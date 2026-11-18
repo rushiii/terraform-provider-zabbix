@@ -16,6 +16,7 @@ This resource supports:
 - agent/SNMP/IPMI/JMX interfaces
 - SNMP v2 details for interfaces with `type = 2`
 - host tags
+- host description
 
 ## Example Usage
 
@@ -25,6 +26,7 @@ This resource supports:
 resource "zabbix_host" "name" {
   name         = "name"
   visible_name = "name"
+  description  = "Main web server, room B"
   enabled      = true
 
   host_group_names = ["Linux servers"]
@@ -74,6 +76,7 @@ resource "zabbix_host" "switch_snmp_v2" {
 
 ### Optional
 
+- `description` (String) Host description (`description` in Zabbix). When omitted, the description set in Zabbix is left unchanged; set `description = ""` to clear it.
 - `enabled` (Boolean) Whether the host is enabled. Default: `true`.
 - `host_group_ids` (Set of String) Host group IDs.
 - `host_group_names` (Set of String) Host group names (resolved to IDs).
