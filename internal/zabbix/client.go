@@ -1046,6 +1046,74 @@ func (c *Client) TriggerUpdate(ctx context.Context, id, description, expression,
 	return c.callAuth(ctx, "trigger.update", params, &ignored)
 }
 
+// HostTrigger is a trigger of a host, possibly inherited from a template.
+type HostTrigger struct {
+	TriggerID   string `json:"triggerid"`
+	Description string `json:"description"`
+	Status      string `json:"status"`
+	// TemplateID is the ID of the template trigger it is inherited from ("0" if not inherited).
+	TemplateID string `json:"templateid"`
+	Hosts      []struct {
+		HostID string `json:"hostid"`
+	} `json:"hosts"`
+}
+
+func (c *Client) hostTriggers(ctx context.Context, params map[string]any, expand bool) ([]HostTrigger, error) {
+	params["output"] = []string{"triggerid", "description", "status", "templateid"}
+	params["selectHosts"] = []string{"hostid"}
+	if expand {
+		params["expandDescription"] = true
+	}
+	var triggers []HostTrigger
+	if err := c.callAuth(ctx, "trigger.get", params, &triggers); err != nil {
+		return nil, err
+	}
+	return triggers, nil
+}
+
+// HostTriggerFind returns the trigger of a host with the given name, matched first as
+// defined (e.g. in the template, with macros) and then with macros expanded.
+func (c *Client) HostTriggerFind(ctx context.Context, hostID, name string) (*HostTrigger, error) {
+	for _, expand := range []bool{false, true} {
+		triggers, err := c.hostTriggers(ctx, map[string]any{"hostids": []string{hostID}}, expand)
+		if err != nil {
+			return nil, err
+		}
+		var matches []HostTrigger
+		for _, t := range triggers {
+			if t.Description == name {
+				matches = append(matches, t)
+			}
+		}
+		if len(matches) > 1 {
+			return nil, fmt.Errorf("several triggers named %q on host %s", name, hostID)
+		}
+		if len(matches) == 1 {
+			return &matches[0], nil
+		}
+	}
+	return nil, fmt.Errorf("trigger %q not found on host %s: %w", name, hostID, ErrNotFound)
+}
+
+// HostTriggerGetByID returns a trigger with its host and template trigger ID.
+func (c *Client) HostTriggerGetByID(ctx context.Context, id string) (*HostTrigger, error) {
+	triggers, err := c.hostTriggers(ctx, map[string]any{"triggerids": []string{id}}, false)
+	if err != nil {
+		return nil, err
+	}
+	if len(triggers) == 0 {
+		return nil, ErrNotFound
+	}
+	return &triggers[0], nil
+}
+
+// TriggerSetStatus enables or disables a trigger. Unlike other fields, the status of a
+// trigger inherited from a template can be changed on the host.
+func (c *Client) TriggerSetStatus(ctx context.Context, id string, enabled bool) error {
+	var ignored any
+	return c.callAuth(ctx, "trigger.update", map[string]any{"triggerid": id, "status": boolToStatus(enabled)}, &ignored)
+}
+
 func (c *Client) TriggerDelete(ctx context.Context, id string) error {
 	var ignored any
 	return c.callAuth(ctx, "trigger.delete", []string{id}, &ignored)
