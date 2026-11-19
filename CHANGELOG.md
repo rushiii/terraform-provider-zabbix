@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### New resources
+
+- `zabbix_host_trigger_status`: enables or disables an existing trigger of a host, such as a
+  trigger inherited from a linked template (e.g. `ICMP Ping`), without creating or deleting
+  it. On destroy, an inherited trigger gets back the status of its template trigger.
+
 ## 1.2.1
 
 ### Bug fixes

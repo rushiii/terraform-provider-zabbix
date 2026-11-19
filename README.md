@@ -11,6 +11,7 @@ Supported resources:
 - `zabbix_host_group`
 - `zabbix_template`
 - `zabbix_trigger`
+- `zabbix_host_trigger_status` (enable/disable a trigger inherited from a template on a host)
 
 Key capabilities:
 

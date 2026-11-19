@@ -183,5 +183,6 @@ func (p *zabbixProvider) Resources(_ context.Context) []func() resource.Resource
 		NewActionResource,
 		NewUserGroupResource,
 		NewUserResource,
+		NewHostTriggerStatusResource,
 	}
 }
