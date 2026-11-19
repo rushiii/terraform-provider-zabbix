@@ -102,10 +102,10 @@ resource "zabbix_host" "switch_snmp_v2" {
 - `host_group_names` (Set of String) Host group names, resolved to IDs at apply time. Computed from `host_group_ids` when not set.
 - `id` (String) Resource ID.
 - `interfaces` (Block List) Host interfaces.
-- `tags` (Map of String) Host tags as `tag => value`.
+- `tags` (Map of String) Host tags as `tag => value`. When not set, the host's tags are left unchanged (tags added in the Zabbix UI or by discovery are kept); `tags = {}` removes them all.
 - `template_ids` (Set of String) Template IDs to link. Computed from `template_names` when not set.
 - `template_names` (Set of String) Template names to link (technical or visible name), resolved to IDs at apply time. Computed from `template_ids` when not set.
-- `visible_name` (String) Display name (`name`) in Zabbix.
+- `visible_name` (String) Display name (`name`) in Zabbix. When not set, Zabbix shows the technical name.
 
 ## Important rules
 
@@ -138,7 +138,7 @@ Optional:
 - `use_ip` (Boolean) Use IP (`true`) or DNS (`false`). Default: `true`.
 - `ip` (String) IP address (required when `use_ip = true`).
 - `dns` (String) DNS name (required when `use_ip = false`).
-- `port` (String) Destination port. Default: `"10050"`.
+- `port` (String) Destination port: a number or a user macro such as `"{$AGENT.PORT}"`. Default: `"10050"`.
 - `snmp_details` (Block) SNMP details.
 
 ### Nested Schema for `interfaces.snmp_details`

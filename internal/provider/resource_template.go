@@ -145,7 +145,12 @@ func (r *templateResource) Read(ctx context.Context, req resource.ReadRequest, r
 	for _, x := range template.Macros {
 		macrosMap[x.Macro] = x.Value
 	}
-	state.Macros = templateMacrosToState(ctx, macrosMap)
+	if len(macrosMap) == 0 && !state.Macros.IsNull() && !state.Macros.IsUnknown() {
+		// Configured as an empty map: keep {} rather than null, so there is no diff.
+		state.Macros, _ = types.MapValueFrom(ctx, types.StringType, map[string]string{})
+	} else {
+		state.Macros = templateMacrosToState(ctx, macrosMap)
+	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
@@ -179,7 +184,12 @@ func (r *templateResource) Update(ctx context.Context, req resource.UpdateReques
 
 	plan.ID = state.ID
 	plan.Name = types.StringValue(name)
-	plan.Macros = templateMacrosToStateKnown(ctx, plan.Macros)
+	if plan.Macros.IsUnknown() && !state.Macros.IsNull() {
+		// Macros not configured: they were left unchanged in Zabbix.
+		plan.Macros = state.Macros
+	} else {
+		plan.Macros = templateMacrosToStateKnown(ctx, plan.Macros)
+	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -199,9 +209,10 @@ func (r *templateResource) ImportState(ctx context.Context, req resource.ImportS
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }
 
-// templateMacrosFromPlan returns a map for the API (macro name -> value); nil if plan macros are null or empty.
+// templateMacrosFromPlan returns a map for the API (macro name -> value); nil if plan macros are
+// null or unknown (macros left unchanged), an empty map if they are configured empty (all removed).
 func templateMacrosFromPlan(m types.Map) map[string]string {
-	if m.IsNull() || m.IsUnknown() || len(m.Elements()) == 0 {
+	if m.IsNull() || m.IsUnknown() {
 		return nil
 	}
 	out := make(map[string]string, len(m.Elements()))

@@ -265,7 +265,42 @@ func (c *Client) callAuth(ctx context.Context, method string, params interface{}
 	return c.call(ctx, method, params, true, out)
 }
 
+// call sends a JSON-RPC request. With username/password authentication, an expired or
+// terminated session is renewed once (new user.login) and the request is retried.
 func (c *Client) call(ctx context.Context, method string, params interface{}, withAuth bool, out interface{}) error {
+	err := c.doCall(ctx, method, params, withAuth, out)
+	if err != nil && withAuth && c.auth.Method == AuthUserPassword && isSessionError(err) {
+		c.mu.Lock()
+		c.sessionAuth = ""
+		c.mu.Unlock()
+		err = c.doCall(ctx, method, params, withAuth, out)
+	}
+	return err
+}
+
+// apiError is an error returned by the Zabbix API.
+type apiError struct {
+	Code    int
+	Message string
+	Data    string
+}
+
+func (e *apiError) Error() string {
+	return fmt.Sprintf("zabbix api error (%d) %s: %s", e.Code, e.Message, e.Data)
+}
+
+// isSessionError reports whether the API rejected the session token (expired, logged out).
+func isSessionError(err error) bool {
+	var apiErr *apiError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	text := strings.ToLower(apiErr.Message + " " + apiErr.Data)
+	return strings.Contains(text, "session terminated") || strings.Contains(text, "not authorized") ||
+		strings.Contains(text, "not authorised")
+}
+
+func (c *Client) doCall(ctx context.Context, method string, params interface{}, withAuth bool, out interface{}) error {
 	if method == "host.create" || method == "host.update" || method == "hostinterface.replacehostinterfaces" ||
 		method == "hostinterface.update" || method == "hostinterface.create" || method == "hostinterface.delete" {
 		if b, err := json.Marshal(params); err == nil {
@@ -329,7 +364,7 @@ func (c *Client) call(ctx context.Context, method string, params interface{}, wi
 		return err
 	}
 	if payload.Error != nil {
-		return fmt.Errorf("zabbix api error (%d) %s: %s", payload.Error.Code, payload.Error.Message, payload.Error.Data)
+		return &apiError{Code: payload.Error.Code, Message: payload.Error.Message, Data: payload.Error.Data}
 	}
 	if out == nil {
 		return nil
@@ -549,7 +584,13 @@ func interfacesForHostCreate(ifaces []HostInterface) []map[string]any {
 
 // interfacesForHostUpdate builds the interfaces payload for host.update: same as create but with
 // interfaceid set for existing interfaces (type,main) so the API updates in place and applies details.
-func interfacesForHostUpdate(ifaces []HostInterface, currentByTypeMain map[string]string) []map[string]any {
+// When several interfaces share the same type and main flag, existing IDs are given out in order, so
+// no ID is used twice.
+func interfacesForHostUpdate(ifaces []HostInterface, currentByTypeMain map[string][]string) []map[string]any {
+	available := make(map[string][]string, len(currentByTypeMain))
+	for k, ids := range currentByTypeMain {
+		available[k] = append([]string(nil), ids...)
+	}
 	out := make([]map[string]any, 0, len(ifaces))
 	for _, i := range ifaces {
 		m := map[string]any{
@@ -561,8 +602,9 @@ func interfacesForHostUpdate(ifaces []HostInterface, currentByTypeMain map[strin
 			"port":  i.Port,
 		}
 		key := fmt.Sprintf("%d,%d", i.Type, i.Main)
-		if id := currentByTypeMain[key]; id != "" {
-			m["interfaceid"] = id
+		if ids := available[key]; len(ids) > 0 {
+			m["interfaceid"] = ids[0]
+			available[key] = ids[1:]
 		}
 		if i.Type == 2 && i.Details != nil {
 			m["details"] = map[string]any{
@@ -645,17 +687,34 @@ func (c *Client) HostCreate(ctx context.Context, req HostCreateRequest) (string,
 	hostID := result.HostIDs[0]
 
 	if allInterfacesAreSNMP(req.Interfaces) {
+		if err := c.finishSNMPHostCreate(ctx, hostID, req.Interfaces, templates); err != nil {
+			// Do not leave a half-configured host that Terraform does not know about.
+			var ignored any
+			if delErr := c.callAuth(ctx, "host.delete", []string{hostID}, &ignored); delErr != nil {
+				return "", fmt.Errorf("%w (and the host %s could not be deleted: %v)", err, hostID, delErr)
+			}
+			return "", err
+		}
+	}
+
+	return hostID, nil
+}
+
+// finishSNMPHostCreate replaces the temporary agent interface of a host created with only SNMP
+// interfaces, then links its templates.
+func (c *Client) finishSNMPHostCreate(ctx context.Context, hostID string, interfaces []HostInterface, templates []map[string]string) error {
+	{
 		curHost, err := c.HostGetByID(ctx, hostID)
 		if err != nil {
-			return "", fmt.Errorf("host.get after create: %w", err)
+			return fmt.Errorf("host.get after create: %w", err)
 		}
 		var ignored any
 		for _, iface := range curHost.Interfaces {
 			if err := c.callAuth(ctx, "hostinterface.delete", []string{iface.InterfaceID}, &ignored); err != nil {
-				return "", fmt.Errorf("hostinterface.delete (temp): %w", err)
+				return fmt.Errorf("hostinterface.delete (temp): %w", err)
 			}
 		}
-		for _, i := range req.Interfaces {
+		for _, i := range interfaces {
 			payload := map[string]any{
 				"hostid": hostID,
 				"type":   i.Type,
@@ -673,18 +732,17 @@ func (c *Client) HostCreate(ctx context.Context, req HostCreateRequest) (string,
 				}
 			}
 			if err := c.callAuth(ctx, "hostinterface.create", payload, &ignored); err != nil {
-				return "", fmt.Errorf("hostinterface.create (SNMP): %w", err)
+				return fmt.Errorf("hostinterface.create (SNMP): %w", err)
 			}
 		}
 		if len(templates) > 0 {
 			updateParams := map[string]any{"hostid": hostID, "templates": templates}
 			if err := c.callAuth(ctx, "host.update", updateParams, &ignored); err != nil {
-				return "", fmt.Errorf("host.update (templates): %w", err)
+				return fmt.Errorf("host.update (templates): %w", err)
 			}
 		}
 	}
-
-	return hostID, nil
+	return nil
 }
 
 func (c *Client) HostGetByID(ctx context.Context, hostID string) (*Host, error) {
@@ -721,10 +779,10 @@ func (c *Client) HostUpdate(ctx context.Context, hostID string, req HostUpdateRe
 	if err != nil {
 		return fmt.Errorf("host.get (interfaces): %w", err)
 	}
-	currentByTypeMain := make(map[string]string)
+	currentByTypeMain := make(map[string][]string)
 	for _, iface := range curHost.Interfaces {
 		key := fmt.Sprintf("%d,%d", iface.Type, iface.Main)
-		currentByTypeMain[key] = iface.InterfaceID
+		currentByTypeMain[key] = append(currentByTypeMain[key], iface.InterfaceID)
 	}
 
 	groups := make([]map[string]string, 0, len(req.GroupIDs))
@@ -737,17 +795,16 @@ func (c *Client) HostUpdate(ctx context.Context, hostID string, req HostUpdateRe
 		templates = append(templates, map[string]string{"templateid": t})
 	}
 
-	tags := req.Tags
-	if tags == nil {
-		tags = []Tag{}
-	}
 	params := map[string]any{
 		"hostid":     hostID,
 		"host":       req.Host,
 		"status":     strconv.Itoa(req.Status),
 		"groups":     groups,
-		"tags":       tags,
 		"interfaces": interfacesForHostUpdate(req.Interfaces, currentByTypeMain),
+	}
+	// nil leaves the host's tags unchanged; an empty list removes them all.
+	if req.Tags != nil {
+		params["tags"] = req.Tags
 	}
 	if req.Name != "" {
 		params["name"] = req.Name
@@ -975,7 +1032,8 @@ func (c *Client) TemplateUpdate(ctx context.Context, id, host, name string, grou
 		"name":       name,
 		"groups":     groups,
 	}
-	if len(macros) > 0 {
+	// nil leaves the macros unchanged; an empty map removes them all.
+	if macros != nil {
 		macrosArr := make([]map[string]string, 0, len(macros))
 		for k, v := range macros {
 			macrosArr = append(macrosArr, map[string]string{"macro": k, "value": v})
@@ -1133,7 +1191,6 @@ type Item struct {
 	Delay     string  `json:"delay"`
 	History   string  `json:"history"`
 	Trends    string  `json:"trends"`
-	DelayFlex string  `json:"delay_flex"`
 	Status    string  `json:"status"` // 0=enabled, 1=disabled
 }
 
@@ -1148,7 +1205,7 @@ type ItemCreateRequest struct {
 	Delay     string // ex: "10m", "60s"
 	History   string // ex: "90d"
 	Trends    string // ex: "365d"
-	DelayFlex string // ex: "50s;1-7,00:00-24:00"
+	DelayFlex string // flexible/scheduling intervals, ex: "50s/1-7,00:00-24:00" (see NormalizeDelayFlex)
 	Enabled   bool
 }
 
@@ -1185,11 +1242,57 @@ func (c *Client) getSNMPInterfaceIDForItem(ctx context.Context, hostID string) (
 	return "0", nil
 }
 
-func (c *Client) ItemCreate(ctx context.Context, req ItemCreateRequest) (string, error) {
-	delayParam := any(req.Delay)
-	if req.Delay == "0" {
-		delayParam = 0
+// itemDelayParam builds the item "delay": the update interval followed by the flexible and
+// scheduling intervals, separated by ";" (e.g. "10m;50s/1-5,09:00-18:00"), as Zabbix 3.4+ expects.
+func itemDelayParam(delay, delayFlex string) any {
+	flex := NormalizeDelayFlex(delayFlex)
+	if flex == "" {
+		if delay == "0" {
+			return 0
+		}
+		return delay
 	}
+	return delay + ";" + flex
+}
+
+// SplitItemDelay splits an item "delay" returned by Zabbix into the update interval and the
+// flexible/scheduling intervals.
+func SplitItemDelay(delay string) (interval, flex string) {
+	interval, flex, _ = strings.Cut(delay, ";")
+	return interval, flex
+}
+
+// NormalizeDelayFlex returns flexible/scheduling intervals in Zabbix format
+// ("50s/1-7,00:00-24:00;md1-5", entries separated by ";"). The older "50s;1-7,00:00-24:00"
+// form (interval;period, used in this provider's documentation) is converted.
+func NormalizeDelayFlex(flex string) string {
+	flex = strings.TrimSpace(flex)
+	if flex == "" || strings.Contains(flex, "/") {
+		return flex
+	}
+	interval, period, ok := strings.Cut(flex, ";")
+	if ok && !strings.Contains(period, ";") && isTimePeriod(period) {
+		return interval + "/" + period
+	}
+	return flex
+}
+
+// isTimePeriod reports whether s looks like a Zabbix time period, e.g. "1-7,00:00-24:00" or "1,8:00-17:00".
+func isTimePeriod(s string) bool {
+	days, hours, ok := strings.Cut(s, ",")
+	if !ok || days == "" || !strings.Contains(hours, ":") || !strings.Contains(hours, "-") {
+		return false
+	}
+	for _, r := range days {
+		if (r < '1' || r > '7') && r != '-' {
+			return false
+		}
+	}
+	return true
+}
+
+func (c *Client) ItemCreate(ctx context.Context, req ItemCreateRequest) (string, error) {
+	delayParam := itemDelayParam(req.Delay, req.DelayFlex)
 	params := map[string]any{
 		"hostid":     req.HostID,
 		"name":       req.Name,
@@ -1246,10 +1349,7 @@ func (c *Client) ItemGetByID(ctx context.Context, id string) (*Item, error) {
 }
 
 func (c *Client) ItemUpdate(ctx context.Context, itemID string, req ItemCreateRequest) error {
-	delayParam := any(req.Delay)
-	if req.Delay == "0" {
-		delayParam = 0
-	}
+	delayParam := itemDelayParam(req.Delay, req.DelayFlex)
 	params := map[string]any{
 		"itemid":     itemID,
 		"name":       req.Name,
@@ -1353,6 +1453,8 @@ type Action struct {
 		} `json:"opmessage_usr,omitempty"`
 		Opmessage *struct {
 			DefaultMsg string `json:"default_msg"`
+			Subject    string `json:"subject"`
+			Message    string `json:"message"`
 		} `json:"opmessage,omitempty"`
 	} `json:"operations"`
 }
@@ -1362,16 +1464,25 @@ type ActionCreateRequest struct {
 	Name              string
 	UserGroupIDs      []string // usrgrpid list
 	UserIDs           []string // optional: userid list (e.g. fst-audiovisuel)
-	Subject           string   // def_shortdata
-	Message           string   // def_longdata
+	Subject           string   // opmessage subject
+	Message           string   // opmessage message
 	Enabled           bool
 	EscPeriod         string   // e.g. "1h", "60s"
 	HostGroupIDs      []string // optional: restrict to hosts in these host groups (conditiontype 0)
 	TriggerNameLike   []string // optional: restrict to triggers whose name contains any of these
 }
 
-func (c *Client) ActionCreate(ctx context.Context, req ActionCreateRequest) (string, error) {
-	// API 7.x style: "filter" (not "conditions" at root). conditiontype 0 = Host group, 3 = trigger description.
+// actionParams builds the filter, operations, status and escalation period shared by
+// action.create and action.update.
+//
+// Conditions: one per host group (conditiontype 0) and one per trigger name pattern
+// (conditiontype 3, "contains"). With more than one condition they are combined with OR
+// (evaltype 2): the action fires for any host in one of the groups, or for any trigger whose
+// name matches one of the patterns.
+//
+// The message is sent to the user groups and users with the configured subject and message
+// (default_msg 0), not the media type defaults.
+func actionParams(req ActionCreateRequest) map[string]any {
 	conditions := make([]map[string]any, 0)
 	for _, gid := range req.HostGroupIDs {
 		if gid == "" {
@@ -1388,9 +1499,9 @@ func (c *Client) ActionCreate(ctx context.Context, req ActionCreateRequest) (str
 	if len(conditions) == 0 {
 		conditions = []map[string]any{{"conditiontype": 3, "operator": 2, "value": ""}}
 	}
-	evaltype := 1   // AND: host in group AND (name like X OR name like Y)
+	evaltype := 1 // a single condition
 	if len(conditions) > 1 {
-		evaltype = 2 // OR between conditions (e.g. group Lampe OR group Laser OR trigger name)
+		evaltype = 2 // OR between all conditions
 	}
 	opmessageGrp := make([]map[string]string, 0, len(req.UserGroupIDs))
 	for _, gid := range req.UserGroupIDs {
@@ -1405,12 +1516,15 @@ func (c *Client) ActionCreate(ctx context.Context, req ActionCreateRequest) (str
 	op := map[string]any{
 		"operationtype": "0",
 		"opmessage_grp": opmessageGrp,
-		"opmessage":     map[string]string{"default_msg": "1"},
+		"opmessage": map[string]string{
+			"default_msg": "0",
+			"subject":     req.Subject,
+			"message":     req.Message,
+		},
 	}
 	if len(opmessageUsr) > 0 {
 		op["opmessage_usr"] = opmessageUsr
 	}
-	operations := []map[string]any{op}
 	status := "1"
 	if req.Enabled {
 		status = "0"
@@ -1419,16 +1533,18 @@ func (c *Client) ActionCreate(ctx context.Context, req ActionCreateRequest) (str
 	if escPeriod == "" {
 		escPeriod = "1h"
 	}
-	filter := map[string]any{"conditions": conditions, "evaltype": evaltype}
-	params := map[string]any{
-		"name":        req.Name,
-		"eventsource": "0",
-		"filter":      filter,
-		"status":      status,
-		"esc_period":  escPeriod,
-		"operations":  operations,
+	return map[string]any{
+		"filter":     map[string]any{"conditions": conditions, "evaltype": evaltype},
+		"status":     status,
+		"esc_period": escPeriod,
+		"operations": []map[string]any{op},
 	}
-	// Note: this API version rejects def_shortdata/def_longdata and opmessage subject/message; message uses media type default.
+}
+
+func (c *Client) ActionCreate(ctx context.Context, req ActionCreateRequest) (string, error) {
+	params := actionParams(req)
+	params["name"] = req.Name
+	params["eventsource"] = "0"
 	var result struct {
 		ActionIDs []string `json:"actionids"`
 	}
@@ -1460,62 +1576,9 @@ func (c *Client) ActionGetByID(ctx context.Context, id string) (*Action, error) 
 }
 
 func (c *Client) ActionUpdate(ctx context.Context, id string, req ActionCreateRequest) error {
-	conditions := make([]map[string]any, 0)
-	for _, gid := range req.HostGroupIDs {
-		if gid == "" {
-			continue
-		}
-		conditions = append(conditions, map[string]any{"conditiontype": 0, "operator": 0, "value": gid})
-	}
-	for _, pat := range req.TriggerNameLike {
-		if pat == "" {
-			continue
-		}
-		conditions = append(conditions, map[string]any{"conditiontype": 3, "operator": 2, "value": pat})
-	}
-	if len(conditions) == 0 {
-		conditions = []map[string]any{{"conditiontype": 3, "operator": 2, "value": ""}}
-	}
-	evaltype := 1
-	if len(conditions) > 1 {
-		evaltype = 2
-	}
-	opmessageGrp := make([]map[string]string, 0, len(req.UserGroupIDs))
-	for _, gid := range req.UserGroupIDs {
-		opmessageGrp = append(opmessageGrp, map[string]string{"usrgrpid": gid})
-	}
-	opmessageUsr := make([]map[string]string, 0, len(req.UserIDs))
-	for _, uid := range req.UserIDs {
-		if uid != "" {
-			opmessageUsr = append(opmessageUsr, map[string]string{"userid": uid})
-		}
-	}
-	op := map[string]any{
-		"operationtype": "0",
-		"opmessage_grp": opmessageGrp,
-		"opmessage":     map[string]string{"default_msg": "1"},
-	}
-	if len(opmessageUsr) > 0 {
-		op["opmessage_usr"] = opmessageUsr
-	}
-	operations := []map[string]any{op}
-	status := "1"
-	if req.Enabled {
-		status = "0"
-	}
-	escPeriod := req.EscPeriod
-	if escPeriod == "" {
-		escPeriod = "1h"
-	}
-	filter := map[string]any{"conditions": conditions, "evaltype": evaltype}
-	params := map[string]any{
-		"actionid":   id,
-		"name":       req.Name,
-		"filter":     filter,
-		"status":     status,
-		"esc_period": escPeriod,
-		"operations": operations,
-	}
+	params := actionParams(req)
+	params["actionid"] = id
+	params["name"] = req.Name
 	var ignored any
 	return c.callAuth(ctx, "action.update", params, &ignored)
 }
