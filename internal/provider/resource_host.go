@@ -19,10 +19,11 @@ import (
 )
 
 var (
-	_ resource.Resource                = &hostResource{}
-	_ resource.ResourceWithConfigure   = &hostResource{}
-	_ resource.ResourceWithImportState = &hostResource{}
-	_ resource.ResourceWithModifyPlan  = &hostResource{}
+	_ resource.Resource                   = &hostResource{}
+	_ resource.ResourceWithConfigure      = &hostResource{}
+	_ resource.ResourceWithImportState    = &hostResource{}
+	_ resource.ResourceWithModifyPlan     = &hostResource{}
+	_ resource.ResourceWithValidateConfig = &hostResource{}
 )
 
 type hostResource struct {
@@ -103,25 +104,25 @@ func (r *hostResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 				Optional:            true,
 				Computed:            true,
 				ElementType:         types.StringType,
-				MarkdownDescription: "Host group IDs.",
+				MarkdownDescription: "Host group IDs. Computed from host_group_names when not set.",
 			},
 			"host_group_names": schema.SetAttribute{
 				Optional:            true,
 				Computed:            true,
 				ElementType:         types.StringType,
-				MarkdownDescription: "Host group names. Alternative to host_group_ids.",
+				MarkdownDescription: "Host group names, resolved to IDs at apply time. Alternative to host_group_ids; computed from it when not set.",
 			},
 			"template_ids": schema.SetAttribute{
 				Optional:            true,
 				Computed:            true,
 				ElementType:         types.StringType,
-				MarkdownDescription: "Linked template IDs.",
+				MarkdownDescription: "Linked template IDs. Computed from template_names when not set; an empty set unlinks all templates.",
 			},
 			"template_names": schema.SetAttribute{
 				Optional:            true,
 				Computed:            true,
 				ElementType:         types.StringType,
-				MarkdownDescription: "Template names. Alternative to template_ids.",
+				MarkdownDescription: "Template names (technical or visible), resolved to IDs at apply time. Alternative to template_ids; computed from it when not set.",
 			},
 			"tags": schema.MapAttribute{
 				Optional:            true,
@@ -197,37 +198,93 @@ func (r *hostResource) Configure(_ context.Context, req resource.ConfigureReques
 	r.client = providerData.Client
 }
 
+// ValidateConfig requires at least one host group. Unknown values (e.g. the ID of a host
+// group created in the same apply) are accepted: they are only known at apply time.
+func (r *hostResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var ids, names types.Set
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("host_group_ids"), &ids)...)
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("host_group_names"), &names)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !mayHaveElements(ids) && !mayHaveElements(names) {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("host_group_ids"),
+			"Missing value",
+			"Provide at least `host_group_ids` or `host_group_names`.",
+		)
+	}
+}
+
+// ModifyPlan plans the host group and template links without calling the API: names are
+// resolved to IDs at apply time, so objects created in the same apply can be referenced.
 func (r *hostResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
-	if r.client == nil || req.Plan.Raw.IsNull() {
+	if req.Plan.Raw.IsNull() {
 		return
 	}
-	var plan hostResourceModel
+	var cfg, plan, state hostResourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &cfg)...)
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	creating := req.State.Raw.IsNull()
+	if !creating {
+		resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	}
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	groupIDs, d := resolveHostGroupIDs(ctx, r.client, plan)
-	resp.Diagnostics.Append(d...)
-	templateIDs, d := resolveTemplateIDs(ctx, r.client, plan)
-	resp.Diagnostics.Append(d...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-	plan.HostGroupIDs, _ = types.SetValueFrom(ctx, types.StringType, groupIDs)
-	plan.TemplateIDs, _ = types.SetValueFrom(ctx, types.StringType, templateIDs)
+	plan.HostGroupIDs, plan.HostGroupNames = planLinks(ctx, cfg.HostGroupIDs, cfg.HostGroupNames, state.HostGroupIDs, state.HostGroupNames, creating)
+	plan.TemplateIDs, plan.TemplateNames = planLinks(ctx, cfg.TemplateIDs, cfg.TemplateNames, state.TemplateIDs, state.TemplateNames, creating)
 	resp.Diagnostics.Append(resp.Plan.Set(ctx, &plan)...)
 }
 
+// setLinksAfterApply reads the host back and stores the host group and template links,
+// keeping the planned values and filling in the computed ones.
+func (r *hostResource) setLinksAfterApply(ctx context.Context, hostID string, plan *hostResourceModel) error {
+	host, err := r.client.HostGetByID(ctx, hostID)
+	if err != nil {
+		return err
+	}
+	groups, templates := linkedObjects(host)
+	plan.HostGroupIDs, plan.HostGroupNames = finalizeLinks(ctx, plan.HostGroupIDs, plan.HostGroupNames, groups)
+	plan.TemplateIDs, plan.TemplateNames = finalizeLinks(ctx, plan.TemplateIDs, plan.TemplateNames, templates)
+	return nil
+}
+
+// clearUnknownLinks replaces unknown link values by null, so a state can be saved even
+// when the host could not be read back.
+func clearUnknownLinks(plan *hostResourceModel) {
+	for _, s := range []*types.Set{&plan.HostGroupIDs, &plan.HostGroupNames, &plan.TemplateIDs, &plan.TemplateNames} {
+		if s.IsUnknown() {
+			*s = types.SetNull(types.StringType)
+		}
+	}
+}
+
+func linkedObjects(host *zabbix.Host) (groups, templates []linkedObject) {
+	for _, g := range host.Groups {
+		groups = append(groups, linkedObject{ID: g.GroupID, Name: g.Name, Aliases: []string{g.Name}})
+	}
+	for _, t := range host.ParentTemplates {
+		name := t.Name
+		if name == "" {
+			name = t.Host
+		}
+		templates = append(templates, linkedObject{ID: t.TemplateID, Name: name, Aliases: []string{t.Host, t.Name}})
+	}
+	return groups, templates
+}
+
 func (r *hostResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
-	var plan hostResourceModel
+	var plan, cfg hostResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.Config.Get(ctx, &cfg)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	groupIDs, d := resolveHostGroupIDs(ctx, r.client, plan)
+	groupIDs, d := resolveHostGroupIDs(ctx, r.client, cfg)
 	resp.Diagnostics.Append(d...)
-	templateIDs, d := resolveTemplateIDs(ctx, r.client, plan)
+	templateIDs, d := resolveTemplateIDs(ctx, r.client, cfg)
 	resp.Diagnostics.Append(d...)
 	tags, d := mapToTags(ctx, plan.Tags)
 	resp.Diagnostics.Append(d...)
@@ -256,8 +313,10 @@ func (r *hostResource) Create(ctx context.Context, req resource.CreateRequest, r
 	if plan.Description.IsUnknown() || plan.Description.IsNull() {
 		plan.Description = types.StringValue("")
 	}
-	plan.HostGroupIDs, _ = types.SetValueFrom(ctx, types.StringType, groupIDs)
-	plan.TemplateIDs, _ = types.SetValueFrom(ctx, types.StringType, templateIDs)
+	if err := r.setLinksAfterApply(ctx, hostID, &plan); err != nil {
+		clearUnknownLinks(&plan)
+		resp.Diagnostics.AddError("host.get error after create", err.Error())
+	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -284,27 +343,9 @@ func (r *hostResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 	state.Enabled = types.BoolValue(zabbix.StatusToEnabled(host.Status))
 	state.Interfaces = flattenInterfaces(host.Interfaces)
 
-	groupIDs := make([]string, 0, len(host.Groups))
-	groupNames := make([]string, 0, len(host.Groups))
-	for _, g := range host.Groups {
-		groupIDs = append(groupIDs, g.GroupID)
-		groupNames = append(groupNames, g.Name)
-	}
-	state.HostGroupIDs, _ = types.SetValueFrom(ctx, types.StringType, groupIDs)
-	state.HostGroupNames, _ = types.SetValueFrom(ctx, types.StringType, groupNames)
-
-	templateIDs := make([]string, 0, len(host.ParentTemplates))
-	templateNames := make([]string, 0, len(host.ParentTemplates))
-	for _, t := range host.ParentTemplates {
-		templateIDs = append(templateIDs, t.TemplateID)
-		if t.Name != "" {
-			templateNames = append(templateNames, t.Name)
-		} else {
-			templateNames = append(templateNames, t.Host)
-		}
-	}
-	state.TemplateIDs, _ = types.SetValueFrom(ctx, types.StringType, templateIDs)
-	state.TemplateNames, _ = types.SetValueFrom(ctx, types.StringType, templateNames)
+	groups, templates := linkedObjects(host)
+	state.HostGroupIDs, state.HostGroupNames = refreshLinks(ctx, state.HostGroupIDs, state.HostGroupNames, groups)
+	state.TemplateIDs, state.TemplateNames = refreshLinks(ctx, state.TemplateIDs, state.TemplateNames, templates)
 
 	if len(host.Tags) == 0 {
 		state.Tags = types.MapNull(types.StringType)
@@ -315,17 +356,17 @@ func (r *hostResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 }
 
 func (r *hostResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan hostResourceModel
-	var state hostResourceModel
+	var plan, cfg, state hostResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.Config.Get(ctx, &cfg)...)
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	groupIDs, d := resolveHostGroupIDs(ctx, r.client, plan)
+	groupIDs, d := resolveHostGroupIDs(ctx, r.client, cfg)
 	resp.Diagnostics.Append(d...)
-	templateIDs, d := resolveTemplateIDs(ctx, r.client, plan)
+	templateIDs, d := resolveTemplateIDs(ctx, r.client, cfg)
 	resp.Diagnostics.Append(d...)
 	tags, d := mapToTags(ctx, plan.Tags)
 	resp.Diagnostics.Append(d...)
@@ -354,8 +395,10 @@ func (r *hostResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	if plan.Description.IsUnknown() || plan.Description.IsNull() {
 		plan.Description = state.Description
 	}
-	plan.HostGroupIDs, _ = types.SetValueFrom(ctx, types.StringType, groupIDs)
-	plan.TemplateIDs, _ = types.SetValueFrom(ctx, types.StringType, templateIDs)
+	if err := r.setLinksAfterApply(ctx, state.ID.ValueString(), &plan); err != nil {
+		clearUnknownLinks(&plan)
+		resp.Diagnostics.AddError("host.get error after update", err.Error())
+	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -428,13 +471,15 @@ func setToStringsOptional(ctx context.Context, value types.Set) ([]string, diag.
 	return setToStrings(ctx, value)
 }
 
-func resolveHostGroupIDs(ctx context.Context, client *zabbix.Client, plan hostResourceModel) ([]string, diag.Diagnostics) {
+// resolveHostGroupIDs returns the host group IDs to link, from the configuration (known at
+// apply time): configured IDs plus configured names resolved through the API.
+func resolveHostGroupIDs(ctx context.Context, client *zabbix.Client, cfg hostResourceModel) ([]string, diag.Diagnostics) {
 	var diags diag.Diagnostics
 
-	ids, d := setToStringsOptional(ctx, plan.HostGroupIDs)
+	ids, d := setToStringsOptional(ctx, cfg.HostGroupIDs)
 	diags.Append(d...)
 
-	names, d := setToStringsOptional(ctx, plan.HostGroupNames)
+	names, d := setToStringsOptional(ctx, cfg.HostGroupNames)
 	diags.Append(d...)
 	if diags.HasError() {
 		return nil, diags
@@ -476,13 +521,20 @@ func resolveHostGroupIDs(ctx context.Context, client *zabbix.Client, plan hostRe
 	return resolvedIDs, diags
 }
 
-func resolveTemplateIDs(ctx context.Context, client *zabbix.Client, plan hostResourceModel) ([]string, diag.Diagnostics) {
+// resolveTemplateIDs returns the template IDs to link, from the configuration. It returns
+// nil when neither template_ids nor template_names is configured: the linked templates are
+// then left as they are. A configured empty set unlinks all templates.
+func resolveTemplateIDs(ctx context.Context, client *zabbix.Client, cfg hostResourceModel) ([]string, diag.Diagnostics) {
 	var diags diag.Diagnostics
 
-	ids, d := setToStringsOptional(ctx, plan.TemplateIDs)
+	if cfg.TemplateIDs.IsNull() && cfg.TemplateNames.IsNull() {
+		return nil, diags
+	}
+
+	ids, d := setToStringsOptional(ctx, cfg.TemplateIDs)
 	diags.Append(d...)
 
-	names, d := setToStringsOptional(ctx, plan.TemplateNames)
+	names, d := setToStringsOptional(ctx, cfg.TemplateNames)
 	diags.Append(d...)
 	if diags.HasError() {
 		return nil, diags
