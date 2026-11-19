@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // scriptedServer answers JSON-RPC calls with a handler and records them.
@@ -261,5 +262,42 @@ func TestActionParams(t *testing.T) {
 	}
 	if p["status"] != "0" || p["esc_period"] != "1h" {
 		t.Errorf("status/esc_period = %v/%v", p["status"], p["esc_period"])
+	}
+}
+
+// A transient database error (concurrent requests) is retried; other errors are not.
+func TestTransientDBErrorRetried(t *testing.T) {
+	saved := dbRetryDelays
+	dbRetryDelays = []time.Duration{time.Millisecond, time.Millisecond, time.Millisecond}
+	t.Cleanup(func() { dbRetryDelays = saved })
+
+	creates := 0
+	srv, _ := newScriptedServer(t, func(call recordedCall) (any, string) {
+		if call.Method == "template.create" {
+			creates++
+			if creates < 3 {
+				return nil, "Database error occurred."
+			}
+			return map[string]any{"templateids": []string{"30"}}, ""
+		}
+		if call.Method == "hostgroup.create" {
+			return nil, "Host group \"x\" already exists."
+		}
+		return map[string]any{}, ""
+	})
+	c := newTestClient(t, srv.URL, Auth{Method: AuthToken, Token: "t"})
+	id, err := c.TemplateCreate(context.Background(), "t", "t", []string{"1"}, nil)
+	if err != nil || id != "30" || creates != 3 {
+		t.Fatalf("id=%q err=%v creates=%d", id, err, creates)
+	}
+
+	if _, err := c.HostGroupCreate(context.Background(), "x"); err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("expected the error to be returned as is, got %v", err)
+	}
+
+	// Gives up after the last retry.
+	creates = -10
+	if _, err := c.TemplateCreate(context.Background(), "t", "t", []string{"1"}, nil); err == nil || creates != -6 {
+		t.Fatalf("expected failure after %d attempts, err=%v creates=%d", len(dbRetryDelays)+1, err, creates)
 	}
 }

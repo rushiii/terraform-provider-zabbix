@@ -21,6 +21,30 @@ Key capabilities:
 - Use either IDs or names for host group/template links on `zabbix_host`
 - Support SNMP v2 host interfaces on `zabbix_host.interfaces`
 
+## One configuration, many files
+
+OpenTofu/Terraform loads every `.tf` file of a directory as a single configuration, so one
+`tofu apply` can create host groups, templates, hosts, items, triggers, users and actions
+together. A complete example split over several files is in `examples/complete/`.
+
+OpenTofu creates resources in parallel, in the order given by the references between them.
+To make one apply work every time:
+
+- **Reference objects instead of writing their IDs or names**:
+  `host_group_ids = [zabbix_host_group.x.id]`, `template_ids = [zabbix_template.t.id]`,
+  `host_id = zabbix_host.h.id`, `user_group_ids = [zabbix_user_group.g.id]`.
+- **Trigger expressions** are plain strings: build them from references so the trigger is
+  created after its host and item, e.g.
+  `expression = "last(/${zabbix_host.h.name}/${zabbix_item.i.key})>100"`.
+- **Names** (`host_group_names`, `template_names`) of objects created in the same
+  configuration need `depends_on = [zabbix_host_group.x]`: a string does not create a
+  dependency. Names of objects that already exist in Zabbix need nothing.
+- **Templates** must be in template groups (`host_group_ids` of `zabbix_template` are
+  template group IDs on Zabbix 6.2+, e.g. `"1"` for "Templates").
+
+The provider retries a request when Zabbix reports a transient database error caused by
+concurrent requests, so the default parallelism of OpenTofu can be kept.
+
 ## Authentication
 
 The provider supports two authentication methods:
@@ -104,7 +128,7 @@ terraform {
   required_providers {
     zabbix = {
       source  = "rushiii/zabbix"
-      version = "1.3.1"
+      version = "1.3.2"
     }
   }
 }

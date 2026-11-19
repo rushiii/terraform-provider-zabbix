@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.3.2
+
+### Bug fixes
+
+- Requests failing with a transient "Database error occurred" are retried. Zabbix reports it
+  when concurrent requests collide while allocating object IDs (e.g. a template and a host
+  created in parallel by one `apply` on a new Zabbix); the failed transaction is rolled back,
+  so retrying is safe.
+
+### Documentation
+
+- "One configuration, many files": how to write a configuration that one `apply` creates
+  entirely, and a complete multi-file example in `examples/complete/`.
+
 ## 1.3.1
 
 ### Bug fixes
