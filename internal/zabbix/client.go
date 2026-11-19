@@ -755,7 +755,8 @@ func (c *Client) HostUpdate(ctx context.Context, hostID string, req HostUpdateRe
 	if req.Description != nil {
 		params["description"] = *req.Description
 	}
-	if len(templates) > 0 {
+	// nil leaves the linked templates unchanged; an empty list unlinks them all.
+	if req.TemplateIDs != nil {
 		params["templates"] = templates
 	}
 

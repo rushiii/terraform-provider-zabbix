@@ -42,6 +42,26 @@ resource "zabbix_host" "name" {
 }
 ```
 
+### Host group created in the same configuration
+
+```terraform
+resource "zabbix_host_group" "visiosense" {
+  name = "Visiosense"
+}
+
+resource "zabbix_host" "tv" {
+  name           = "fst-tv-atela.example.fr"
+  host_group_ids = [zabbix_host_group.visiosense.id]
+  template_names = ["ICMP Ping"]
+
+  interfaces {
+    type = 3
+    ip   = "172.17.32.22"
+    port = "623"
+  }
+}
+```
+
 ### Host SNMP v2
 
 ```terraform
@@ -78,19 +98,27 @@ resource "zabbix_host" "switch_snmp_v2" {
 
 - `description` (String) Host description (`description` in Zabbix). When omitted, the description set in Zabbix is left unchanged; set `description = ""` to clear it.
 - `enabled` (Boolean) Whether the host is enabled. Default: `true`.
-- `host_group_ids` (Set of String) Host group IDs.
-- `host_group_names` (Set of String) Host group names (resolved to IDs).
+- `host_group_ids` (Set of String) Host group IDs. Computed from `host_group_names` when not set.
+- `host_group_names` (Set of String) Host group names, resolved to IDs at apply time. Computed from `host_group_ids` when not set.
 - `id` (String) Resource ID.
 - `interfaces` (Block List) Host interfaces.
 - `tags` (Map of String) Host tags as `tag => value`.
-- `template_ids` (Set of String) Template IDs to link.
-- `template_names` (Set of String) Template names to link (resolved to IDs).
+- `template_ids` (Set of String) Template IDs to link. Computed from `template_names` when not set.
+- `template_names` (Set of String) Template names to link (technical or visible name), resolved to IDs at apply time. Computed from `template_ids` when not set.
 - `visible_name` (String) Display name (`name`) in Zabbix.
 
 ## Important rules
 
 - You must provide at least `host_group_ids` or `host_group_names`.
 - ID and name lists are merged and deduplicated.
+- The attribute you do not set is computed from the other one, so you can use
+  either form; both are always known after apply.
+- Host groups and templates created in the same configuration can be referenced:
+  - by ID, e.g. `host_group_ids = [zabbix_host_group.x.id]` (the dependency is implicit);
+  - by name, with `depends_on = [zabbix_host_group.x]` so that the group exists when
+    the name is resolved (a plain string does not create a dependency).
+- Templates: when neither `template_ids` nor `template_names` is set, the templates
+  linked to the host are left unchanged. Set `template_ids = []` to unlink them all.
 - When `interfaces.use_ip = true`, `ip` is required.
 - When `interfaces.use_ip = false`, `dns` is required.
 - If `interfaces.type = 2` (SNMP), only version `2` is currently supported.

@@ -44,6 +44,21 @@ Zabbix 7.2 removed the `auth` request field and the `selectGroups` / `rights` pa
 older provider versions fail on recent Zabbix servers with `unexpected parameter "auth"`.
 Resource behavior is the same on every supported version.
 
+## Tests
+
+```bash
+go test ./...
+```
+
+Acceptance tests run against a real Zabbix server and are skipped unless `TF_ACC` is set:
+
+```bash
+TF_ACC=1 ZABBIX_URL=http://localhost:8080/api_jsonrpc.php ZABBIX_USERNAME=Admin ZABBIX_PASSWORD=zabbix \
+  go test ./internal/provider/ -run TestAcc -v
+```
+
+With OpenTofu, also set `TF_ACC_TERRAFORM_PATH=$(which tofu)` and `TF_ACC_PROVIDER_HOST=registry.opentofu.org`.
+
 ## Build
 
 ```bash
@@ -86,7 +101,7 @@ terraform {
   required_providers {
     zabbix = {
       source  = "rushiii/zabbix"
-      version = "1.2.0"
+      version = "1.2.1"
     }
   }
 }
