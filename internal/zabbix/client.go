@@ -267,15 +267,42 @@ func (c *Client) callAuth(ctx context.Context, method string, params interface{}
 
 // call sends a JSON-RPC request. With username/password authentication, an expired or
 // terminated session is renewed once (new user.login) and the request is retried.
+//
+// A "Database error occurred" is retried a few times: Zabbix reports it when concurrent
+// requests (OpenTofu applies up to 10 changes in parallel) collide while allocating object IDs.
+// The failed transaction is rolled back, so the request can be sent again safely.
 func (c *Client) call(ctx context.Context, method string, params interface{}, withAuth bool, out interface{}) error {
-	err := c.doCall(ctx, method, params, withAuth, out)
-	if err != nil && withAuth && c.auth.Method == AuthUserPassword && isSessionError(err) {
-		c.mu.Lock()
-		c.sessionAuth = ""
-		c.mu.Unlock()
+	var err error
+	for attempt := 0; ; attempt++ {
 		err = c.doCall(ctx, method, params, withAuth, out)
+		if err != nil && withAuth && c.auth.Method == AuthUserPassword && isSessionError(err) {
+			c.mu.Lock()
+			c.sessionAuth = ""
+			c.mu.Unlock()
+			err = c.doCall(ctx, method, params, withAuth, out)
+		}
+		if err == nil || !isTransientDBError(err) || attempt >= len(dbRetryDelays) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(dbRetryDelays[attempt]):
+		}
 	}
-	return err
+}
+
+// dbRetryDelays are the waits before each new attempt after a transient database error.
+var dbRetryDelays = []time.Duration{200 * time.Millisecond, 500 * time.Millisecond, time.Second, 2 * time.Second}
+
+// isTransientDBError reports whether the API failed on a database error (e.g. a duplicate key
+// on the ids table or a deadlock between concurrent requests).
+func isTransientDBError(err error) bool {
+	var apiErr *apiError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	return strings.Contains(strings.ToLower(apiErr.Data), "database error")
 }
 
 // apiError is an error returned by the Zabbix API.
