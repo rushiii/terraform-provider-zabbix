@@ -11,6 +11,8 @@ Supported resources:
 - `zabbix_host_group`
 - `zabbix_template`
 - `zabbix_trigger`
+- `zabbix_item`
+- `zabbix_action`
 - `zabbix_host_trigger_status` (enable/disable a trigger inherited from a template on a host)
 
 Key capabilities:
@@ -102,7 +104,7 @@ terraform {
   required_providers {
     zabbix = {
       source  = "rushiii/zabbix"
-      version = "1.3.0"
+      version = "1.3.1"
     }
   }
 }

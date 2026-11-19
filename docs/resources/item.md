@@ -21,7 +21,7 @@ resource "zabbix_item" "lamp_hours" {
   delay      = "10m"
   history    = "90d"
   trends     = "365d"
-  delay_flex = "50s;1-7,00:00-24:00"
+  delay_flex = "50s/1-5,09:00-18:00"
   enabled    = true
 }
 ```
@@ -43,7 +43,7 @@ resource "zabbix_item" "lamp_hours" {
 - `delay` (String) Update interval (e.g. 10m, 60s). Default: 10m.
 - `history` (String) History storage period (e.g. 90d). Default: 90d.
 - `trends` (String) Trends storage period (e.g. 365d). Default: 365d.
-- `delay_flex` (String) Flexible interval, e.g. 50s;1-7,00:00-24:00.
+- `delay_flex` (String) Flexible and/or scheduling intervals in Zabbix format, separated by `;`, e.g. `50s/1-5,09:00-18:00` or `50s/1-5,09:00-18:00;md1-5`. They are added to `delay` (sent as `10m;50s/1-5,09:00-18:00`). The older form `50s;1-7,00:00-24:00` is still accepted.
 - `enabled` (Bool) Whether the item is enabled. Default: true.
 
 ### Read-only

@@ -32,6 +32,7 @@ resource "zabbix_template" "custom_icmp" {
 ### Optional
 
 - `id` (String) Resource ID.
+- `macros` (Map of String) User macros of the template, as `macro => value` (e.g. `{ "{$SNMP_COMMUNITY}" = "public" }`). When not set, the template's macros are left unchanged; `macros = {}` removes them all.
 - `name` (String) Visible template name.
 
 ## Behavior

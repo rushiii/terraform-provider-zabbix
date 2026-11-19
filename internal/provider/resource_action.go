@@ -171,16 +171,24 @@ func (r *actionResource) Read(ctx context.Context, req resource.ReadRequest, res
 	}
 
 	state.Name = types.StringValue(action.Name)
-	subject := action.DefShortData
-	if subject == "" {
-		subject = "Zabbix: {TRIGGER.STATUS} - {HOST.NAME}: {TRIGGER.NAME}"
+	// The subject and message are those of the message operation. Actions created by older
+	// versions of this provider use the media type defaults (default_msg 1): they show up as
+	// the defaults below, so the next apply sets the configured text.
+	subject := "Zabbix: {TRIGGER.STATUS} - {HOST.NAME}: {TRIGGER.NAME}"
+	message := "Trigger: {TRIGGER.NAME}\nHost: {HOST.NAME}\nSeverity: {TRIGGER.SEVERITY}\nStatus: {TRIGGER.STATUS}\nTime: {EVENT.DATE} {EVENT.TIME}\nItem value: {ITEM.VALUE}\n"
+	for _, op := range action.Operations {
+		if op.Opmessage != nil && op.Opmessage.DefaultMsg == "0" {
+			subject, message = op.Opmessage.Subject, op.Opmessage.Message
+			break
+		}
 	}
-	state.Subject = types.StringValue(strings.TrimSpace(subject))
-	message := action.DefLongData
-	if message == "" {
-		message = "Trigger: {TRIGGER.NAME}\nHost: {HOST.NAME}\nSeverity: {TRIGGER.SEVERITY}\nStatus: {TRIGGER.STATUS}\nTime: {EVENT.DATE} {EVENT.TIME}\nItem value: {ITEM.VALUE}\n"
+	// Keep the configured spelling when only whitespace differs (heredocs, trailing newline).
+	if state.Subject.IsNull() || strings.TrimSpace(state.Subject.ValueString()) != strings.TrimSpace(subject) {
+		state.Subject = types.StringValue(strings.TrimSpace(subject))
 	}
-	state.Message = types.StringValue(normalizeActionMessage(message))
+	if state.Message.IsNull() || normalizeActionMessage(state.Message.ValueString()) != normalizeActionMessage(message) {
+		state.Message = types.StringValue(normalizeActionMessage(message))
+	}
 	state.Enabled = types.BoolValue(action.Status == "0")
 	state.EscPeriod = types.StringValue(action.EscPeriod)
 

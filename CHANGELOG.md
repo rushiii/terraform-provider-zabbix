@@ -1,5 +1,33 @@
 # Changelog
 
+## 1.3.1
+
+### Bug fixes
+
+- `zabbix_host`: no perpetual diff on `visible_name` when it is not set (Zabbix reports the
+  technical name as the visible name).
+- `zabbix_host`: tags are only managed when `tags` is set. Tags added outside Terraform (UI,
+  discovery) are no longer removed by an apply on a host without `tags`; `tags = {}` removes
+  all tags.
+- `zabbix_host`: an interface `port` can be a user macro (`"{$AGENT.PORT}"`); it used to be
+  replaced by 10050. An invalid port is now an error instead of being silently replaced.
+- `zabbix_host`: several interfaces with the same type and main flag (e.g. two secondary agent
+  interfaces) are updated correctly; one of them used to be dropped.
+- `zabbix_host`: if a host with only SNMP interfaces cannot be fully set up, it is deleted
+  instead of being left in Zabbix outside of the state.
+- `zabbix_action`: `subject` and `message` are now sent to Zabbix and used in notifications
+  (they were ignored, and the plan always showed a diff). Existing actions show one change
+  on the next plan.
+- `zabbix_item`: `delay_flex` is applied (it was ignored). The Zabbix format
+  (`50s/1-5,09:00-18:00;md1-5`) and the older `50s;1-7,00:00-24:00` form are accepted.
+- `zabbix_template`: `macros = {}` removes all macros (the last macro used to stay).
+- Username/password authentication: an expired session is renewed automatically instead of
+  failing every remaining call.
+
+### Documentation
+
+- New `zabbix_action` page, including how conditions are combined (OR).
+
 ## 1.3.0
 
 ### New resources

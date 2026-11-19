@@ -119,7 +119,7 @@ func (r *itemResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 			},
 			"delay_flex": schema.StringAttribute{
 				Optional:            true,
-				MarkdownDescription: "Flexible interval, e.g. 50s;1-7,00:00-24:00 (50s Mon-Sun 24/7).",
+				MarkdownDescription: "Flexible and/or scheduling intervals in Zabbix format, separated by `;`, e.g. `50s/1-5,09:00-18:00` or `50s/1-5,09:00-18:00;md1-5`. The older form `50s;1-7,00:00-24:00` is also accepted.",
 			},
 			"enabled": schema.BoolAttribute{
 				Optional:            true,
@@ -210,13 +210,17 @@ func (r *itemResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 	} else {
 		state.Units = types.StringNull()
 	}
-	state.Delay = types.StringValue(item.Delay)
+	interval, flex := zabbix.SplitItemDelay(item.Delay)
+	state.Delay = types.StringValue(interval)
 	state.History = types.StringValue(item.History)
 	state.Trends = types.StringValue(item.Trends)
-	if item.DelayFlex != "" {
-		state.DelayFlex = types.StringValue(item.DelayFlex)
-	} else {
+	switch {
+	case flex == "":
 		state.DelayFlex = types.StringNull()
+	case !state.DelayFlex.IsNull() && zabbix.NormalizeDelayFlex(state.DelayFlex.ValueString()) == flex:
+		// Keep the configured spelling (e.g. the older "50s;1-7,00:00-24:00" form).
+	default:
+		state.DelayFlex = types.StringValue(flex)
 	}
 	state.Enabled = types.BoolValue(zabbix.StatusToEnabled(item.Status))
 

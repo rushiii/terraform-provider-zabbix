@@ -150,6 +150,8 @@ func TestAccHost_switchHostGroupByID(t *testing.T) {
 				ResourceName:      "zabbix_host.test",
 				ImportState:       true,
 				ImportStateVerify: true,
+				// A visible name equal to the technical name reads as "no visible name" on import.
+				ImportStateVerifyIgnore: []string{"visible_name"},
 			},
 		},
 	})

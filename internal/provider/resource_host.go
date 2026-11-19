@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"strconv"
+	"strings"
 
 	"github.com/rushiii/terraform-provider-zabbix/internal/zabbix"
 
@@ -127,7 +128,7 @@ func (r *hostResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 			"tags": schema.MapAttribute{
 				Optional:            true,
 				ElementType:         types.StringType,
-				MarkdownDescription: "Tags map (tag => value).",
+				MarkdownDescription: "Tags map (tag => value). When not set, the host's tags are left unchanged; `{}` removes them all.",
 			},
 		},
 		Blocks: map[string]schema.Block{
@@ -338,7 +339,12 @@ func (r *hostResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 	}
 
 	state.Name = types.StringValue(host.Host)
-	state.VisibleName = nullOrString(host.Name)
+	// Without a visible name, Zabbix reports the technical name: keep visible_name unset then.
+	if state.VisibleName.IsNull() && host.Name == host.Host {
+		state.VisibleName = types.StringNull()
+	} else {
+		state.VisibleName = nullOrString(host.Name)
+	}
 	state.Description = types.StringValue(host.Description)
 	state.Enabled = types.BoolValue(zabbix.StatusToEnabled(host.Status))
 	state.Interfaces = flattenInterfaces(host.Interfaces)
@@ -347,9 +353,9 @@ func (r *hostResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 	state.HostGroupIDs, state.HostGroupNames = refreshLinks(ctx, state.HostGroupIDs, state.HostGroupNames, groups)
 	state.TemplateIDs, state.TemplateNames = refreshLinks(ctx, state.TemplateIDs, state.TemplateNames, templates)
 
-	if len(host.Tags) == 0 {
-		state.Tags = types.MapNull(types.StringType)
-	} else {
+	// Tags are only managed when configured: an unset tags attribute leaves the host's tags
+	// (added in the UI or by discovery) alone.
+	if !state.Tags.IsNull() {
 		state.Tags, _ = tagsToMap(ctx, host.Tags)
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
@@ -617,9 +623,15 @@ func expandInterfaces(interfaces []hostInterfaceModel) ([]zabbix.HostInterface, 
 		}
 
 		port := "10050"
-		if !it.Port.IsNull() && it.Port.ValueString() != "" {
-			if _, err := strconv.Atoi(it.Port.ValueString()); err == nil {
-				port = it.Port.ValueString()
+		if !it.Port.IsNull() && !it.Port.IsUnknown() && it.Port.ValueString() != "" {
+			port = it.Port.ValueString()
+			if !isValidPort(port) {
+				diags.AddAttributeError(
+					path.Root("interfaces").AtListIndex(index).AtName("port"),
+					"Invalid port",
+					"`port` must be a number or a user macro such as `{$AGENT.PORT}`.",
+				)
+				continue
 			}
 		}
 
@@ -694,6 +706,15 @@ func expandSNMPDetails(in *hostSNMPDetailsModel) *zabbix.SNMPDetails {
 		Version:   zabbix.FlexIntFrom(version),
 		Community: community,
 	}
+}
+
+// isValidPort accepts a port number or a user macro ({$MACRO}), as Zabbix does.
+func isValidPort(port string) bool {
+	if strings.HasPrefix(port, "{$") && strings.HasSuffix(port, "}") {
+		return true
+	}
+	n, err := strconv.Atoi(port)
+	return err == nil && n >= 0 && n <= 65535
 }
 
 func boolToInt(value bool) int {
