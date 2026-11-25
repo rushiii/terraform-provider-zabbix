@@ -370,3 +370,75 @@ resource "zabbix_template" "t" {
 		},
 	})
 }
+
+// A host with only an SNMP interface, linked to a template with SNMP items (Zabbix 8.0 no
+// longer allows adding interfaces after host.create).
+func TestAccHost_snmpOnly(t *testing.T) {
+	s := acctest.RandString(8)
+	host := "tf-acc-snmp-" + s
+	cfg := func(community string) string {
+		return testAccProviderConfig() + fmt.Sprintf(`
+resource "zabbix_template" "t" {
+  host           = "tf-acc-snmp-tpl-%[1]s"
+  host_group_ids = ["1"]
+}
+
+resource "zabbix_item" "uptime" {
+  host_id    = zabbix_template.t.id
+  name       = "Uptime"
+  key        = "sysUpTime"
+  type       = 20
+  value_type = 3
+  snmp_oid   = "1.3.6.1.2.1.1.3.0"
+  delay      = "5m"
+}
+
+resource "zabbix_host" "test" {
+  name             = %[2]q
+  visible_name     = %[2]q
+  host_group_names = ["Linux servers"]
+  template_ids     = [zabbix_template.t.id]
+  depends_on       = [zabbix_item.uptime]
+
+  interfaces {
+    type = 2
+    ip   = "10.0.0.1"
+    port = "161"
+    snmp_details {
+      version   = 2
+      community = %[3]q
+    }
+  }
+}
+`, s, host, community)
+	}
+	check := func(community string) resource.TestCheckFunc {
+		return func(*terraform.State) error {
+			var hosts []struct {
+				Interfaces []struct {
+					Type    string `json:"type"`
+					Details struct {
+						Community string `json:"community"`
+					} `json:"details"`
+				} `json:"interfaces"`
+				ParentTemplates []any `json:"parentTemplates"`
+			}
+			testAccAPI(t, "host.get", map[string]any{
+				"filter": map[string]any{"host": []string{host}}, "selectInterfaces": "extend", "selectParentTemplates": []string{"templateid"},
+			}, &hosts)
+			if len(hosts) != 1 || len(hosts[0].Interfaces) != 1 || hosts[0].Interfaces[0].Type != "2" ||
+				hosts[0].Interfaces[0].Details.Community != community || len(hosts[0].ParentTemplates) != 1 {
+				return fmt.Errorf("host in Zabbix = %+v", hosts)
+			}
+			return nil
+		}
+	}
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: cfg("{$SNMP_COMMUNITY}"), Check: check("{$SNMP_COMMUNITY}")},
+			{Config: cfg("public"), Check: check("public")},
+		},
+	})
+}

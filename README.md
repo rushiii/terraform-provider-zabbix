@@ -69,6 +69,8 @@ The provider detects the Zabbix API version at startup (`apiinfo.version`) and a
 
 Zabbix 7.2 removed the `auth` request field and the `selectGroups` / `rights` parameters, which is why
 older provider versions fail on recent Zabbix servers with `unexpected parameter "auth"`.
+Zabbix 8.0 removed the `hostinterface.create` / `update` / `delete` methods: provider versions before
+1.3.3 fail on 8.0 when creating a host with only SNMP interfaces (`Method not found`).
 Resource behavior is the same on every supported version.
 
 ## Tests
@@ -128,7 +130,7 @@ terraform {
   required_providers {
     zabbix = {
       source  = "rushiii/zabbix"
-      version = "1.3.2"
+      version = "1.3.3"
     }
   }
 }
