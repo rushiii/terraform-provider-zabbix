@@ -148,6 +148,23 @@ Optional:
 - `version` (Number) SNMP version. Default: `2` (only accepted value currently).
 - `community` (String) SNMP community. Default: `"{$SNMP_COMMUNITY}"`.
 
+## Existing hosts
+
+`zabbix_host` creates the host. For a host that already exists in Zabbix (created in the UI or
+by discovery), `tofu apply` fails with `Host with the same name "..." already exists`. Either:
+
+- import it, so that `zabbix_host` manages it from then on (the configuration must describe its
+  interfaces; the next apply aligns Zabbix with it):
+
+  ```terraform
+  import {
+    to = zabbix_host.srv
+    id = "10819" # host ID, e.g. from data.zabbix_host or the Zabbix UI
+  }
+  ```
+
+- or only add it to groups with `zabbix_host_group_membership`, leaving the rest of the host as it is.
+
 ## Import
 
 ```bash

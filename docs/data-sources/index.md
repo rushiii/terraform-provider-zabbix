@@ -7,4 +7,5 @@ description: |-
 
 # zabbix Data Sources
 
-No data sources are available in this provider version.
+- `zabbix_host`: looks up an existing host by technical or visible name.
+- `zabbix_user_group`: looks up a user group by name (e.g. "Zabbix administrators").

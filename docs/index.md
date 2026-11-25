@@ -19,10 +19,12 @@ from Terraform/OpenTofu.
 - `zabbix_item`
 - `zabbix_action`
 - `zabbix_host_trigger_status` (enable/disable a trigger inherited from a template on a host)
+- `zabbix_host_group_membership` (add existing hosts to a host group)
 
 ## Data sources
 
-This provider currently does not expose any data sources.
+- `zabbix_host`: looks up an existing host by name.
+- `zabbix_user_group`: looks up a user group by name.
 
 ## Example Usage
 
@@ -31,7 +33,7 @@ terraform {
   required_providers {
     zabbix = {
       source  = "rushiii/zabbix"
-      version = "1.3.3"
+      version = "1.4.0"
     }
   }
 }
