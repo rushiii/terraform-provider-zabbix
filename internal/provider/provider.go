@@ -170,6 +170,7 @@ func buildAuth(cfg providerModel) (zabbix.Auth, diag.Diagnostics) {
 func (p *zabbixProvider) DataSources(_ context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
 		NewUserGroupDataSource,
+		NewHostDataSource,
 	}
 }
 
@@ -184,5 +185,6 @@ func (p *zabbixProvider) Resources(_ context.Context) []func() resource.Resource
 		NewUserGroupResource,
 		NewUserResource,
 		NewHostTriggerStatusResource,
+		NewHostGroupMembershipResource,
 	}
 }

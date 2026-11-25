@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.4.0
+
+### New
+
+- Data source `zabbix_host`: looks up an existing host by technical or visible name (e.g. a
+  host created in the Zabbix UI or by discovery).
+- Resource `zabbix_host_group_membership`: adds existing hosts to a host group
+  (`hostgroup.massadd` / `massremove`) without managing anything else about them.
+
+### Documentation
+
+- `zabbix_host`: how to handle hosts that already exist in Zabbix (import, or group membership)
+  instead of failing with `Host with the same name ... already exists`.
+
 ## 1.3.3
 
 ### Zabbix 8.0

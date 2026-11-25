@@ -828,6 +828,77 @@ func (c *Client) HostGroupIDsByNames(ctx context.Context, names []string) ([]str
 	return out, nil
 }
 
+// HostGroupAddHosts adds existing hosts to a host group, leaving their other groups untouched.
+func (c *Client) HostGroupAddHosts(ctx context.Context, groupID string, hostIDs []string) error {
+	if len(hostIDs) == 0 {
+		return nil
+	}
+	hosts := make([]map[string]string, 0, len(hostIDs))
+	for _, id := range hostIDs {
+		hosts = append(hosts, map[string]string{"hostid": id})
+	}
+	var ignored any
+	return c.callAuth(ctx, "hostgroup.massadd", map[string]any{
+		"groups": []map[string]string{{"groupid": groupID}},
+		"hosts":  hosts,
+	}, &ignored)
+}
+
+// HostGroupRemoveHosts removes hosts from a host group, leaving their other groups untouched.
+// Zabbix refuses to remove a host from its last group.
+func (c *Client) HostGroupRemoveHosts(ctx context.Context, groupID string, hostIDs []string) error {
+	if len(hostIDs) == 0 {
+		return nil
+	}
+	var ignored any
+	return c.callAuth(ctx, "hostgroup.massremove", map[string]any{
+		"groupids": []string{groupID},
+		"hostids":  hostIDs,
+	}, &ignored)
+}
+
+// HostIDsInGroup returns the IDs of the hosts in a host group.
+func (c *Client) HostIDsInGroup(ctx context.Context, groupID string) ([]string, error) {
+	var hosts []struct {
+		HostID string `json:"hostid"`
+	}
+	if err := c.callAuth(ctx, "host.get", map[string]any{
+		"groupids": []string{groupID},
+		"output":   []string{"hostid"},
+	}, &hosts); err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(hosts))
+	for _, h := range hosts {
+		ids = append(ids, h.HostID)
+	}
+	return ids, nil
+}
+
+// HostGetByName returns the host with the given technical name, or else with the given visible
+// name. It is ErrNotFound when no host matches, and an error when several hosts share the
+// visible name.
+func (c *Client) HostGetByName(ctx context.Context, name string) (*Host, error) {
+	for _, field := range []string{"host", "name"} {
+		var hosts []struct {
+			HostID string `json:"hostid"`
+		}
+		if err := c.callAuth(ctx, "host.get", map[string]any{
+			"output": []string{"hostid"},
+			"filter": map[string]any{field: []string{name}},
+		}, &hosts); err != nil {
+			return nil, err
+		}
+		if len(hosts) > 1 {
+			return nil, fmt.Errorf("several hosts named %q", name)
+		}
+		if len(hosts) == 1 {
+			return c.HostGetByID(ctx, hosts[0].HostID)
+		}
+	}
+	return nil, fmt.Errorf("host %q not found: %w", name, ErrNotFound)
+}
+
 func (c *Client) HostGroupUpdate(ctx context.Context, id, name string) error {
 	var ignored any
 	return c.callAuth(ctx, "hostgroup.update", map[string]string{"groupid": id, "name": name}, &ignored)
