@@ -328,8 +328,7 @@ func isSessionError(err error) bool {
 }
 
 func (c *Client) doCall(ctx context.Context, method string, params interface{}, withAuth bool, out interface{}) error {
-	if method == "host.create" || method == "host.update" || method == "hostinterface.replacehostinterfaces" ||
-		method == "hostinterface.update" || method == "hostinterface.create" || method == "hostinterface.delete" {
+	if method == "host.create" || method == "host.update" {
 		if b, err := json.Marshal(params); err == nil {
 			log.Printf("zabbix client debug: %s params=%s", method, string(b))
 		}
@@ -645,20 +644,9 @@ func interfacesForHostUpdate(ifaces []HostInterface, currentByTypeMain map[strin
 	return out
 }
 
-// allInterfacesAreSNMP returns true if every interface is type 2 (SNMP). host.create fails with
-// "Incorrect arguments" when only SNMP interfaces are sent, so we use a workaround.
-func allInterfacesAreSNMP(ifaces []HostInterface) bool {
-	if len(ifaces) == 0 {
-		return false
-	}
-	for _, i := range ifaces {
-		if i.Type != 2 {
-			return false
-		}
-	}
-	return true
-}
-
+// HostCreate creates a host with its interfaces, groups, templates and tags in one host.create
+// call. This also works for hosts with only SNMP interfaces on every supported Zabbix version
+// (Zabbix 8.0 no longer has hostinterface.create/delete, so interfaces cannot be added later).
 func (c *Client) HostCreate(ctx context.Context, req HostCreateRequest) (string, error) {
 	groups := make([]map[string]string, 0, len(req.GroupIDs))
 	for _, g := range req.GroupIDs {
@@ -670,26 +658,11 @@ func (c *Client) HostCreate(ctx context.Context, req HostCreateRequest) (string,
 		templates = append(templates, map[string]string{"templateid": t})
 	}
 
-	interfacesToSend := req.Interfaces
-	skipTemplatesOnCreate := false
-	if allInterfacesAreSNMP(req.Interfaces) {
-		// Zabbix host.create rejects a single SNMP interface; create with temporary Agent then replace.
-		interfacesToSend = []HostInterface{{
-			Type:  1,
-			Main:  1,
-			UseIP: 1,
-			IP:    "127.0.0.1",
-			DNS:   "",
-			Port:  "10050",
-		}}
-		skipTemplatesOnCreate = true
-	}
-
 	params := map[string]any{
 		"host":       req.Host,
 		"name":       req.Name,
 		"status":     req.Status,
-		"interfaces": interfacesForHostCreate(interfacesToSend),
+		"interfaces": interfacesForHostCreate(req.Interfaces),
 		"groups":     groups,
 	}
 	if len(req.Tags) > 0 {
@@ -698,7 +671,7 @@ func (c *Client) HostCreate(ctx context.Context, req HostCreateRequest) (string,
 	if req.Description != nil {
 		params["description"] = *req.Description
 	}
-	if len(templates) > 0 && !skipTemplatesOnCreate {
+	if len(templates) > 0 {
 		params["templates"] = templates
 	}
 
@@ -711,65 +684,7 @@ func (c *Client) HostCreate(ctx context.Context, req HostCreateRequest) (string,
 	if len(result.HostIDs) == 0 {
 		return "", errors.New("host.create returned no hostid")
 	}
-	hostID := result.HostIDs[0]
-
-	if allInterfacesAreSNMP(req.Interfaces) {
-		if err := c.finishSNMPHostCreate(ctx, hostID, req.Interfaces, templates); err != nil {
-			// Do not leave a half-configured host that Terraform does not know about.
-			var ignored any
-			if delErr := c.callAuth(ctx, "host.delete", []string{hostID}, &ignored); delErr != nil {
-				return "", fmt.Errorf("%w (and the host %s could not be deleted: %v)", err, hostID, delErr)
-			}
-			return "", err
-		}
-	}
-
-	return hostID, nil
-}
-
-// finishSNMPHostCreate replaces the temporary agent interface of a host created with only SNMP
-// interfaces, then links its templates.
-func (c *Client) finishSNMPHostCreate(ctx context.Context, hostID string, interfaces []HostInterface, templates []map[string]string) error {
-	{
-		curHost, err := c.HostGetByID(ctx, hostID)
-		if err != nil {
-			return fmt.Errorf("host.get after create: %w", err)
-		}
-		var ignored any
-		for _, iface := range curHost.Interfaces {
-			if err := c.callAuth(ctx, "hostinterface.delete", []string{iface.InterfaceID}, &ignored); err != nil {
-				return fmt.Errorf("hostinterface.delete (temp): %w", err)
-			}
-		}
-		for _, i := range interfaces {
-			payload := map[string]any{
-				"hostid": hostID,
-				"type":   i.Type,
-				"main":   i.Main,
-				"useip":  i.UseIP,
-				"ip":     i.IP,
-				"dns":    i.DNS,
-				"port":   i.Port,
-			}
-			if i.Details != nil {
-				payload["details"] = map[string]any{
-					"version":   int(i.Details.Version),
-					"community": i.Details.Community,
-					"bulk":      1,
-				}
-			}
-			if err := c.callAuth(ctx, "hostinterface.create", payload, &ignored); err != nil {
-				return fmt.Errorf("hostinterface.create (SNMP): %w", err)
-			}
-		}
-		if len(templates) > 0 {
-			updateParams := map[string]any{"hostid": hostID, "templates": templates}
-			if err := c.callAuth(ctx, "host.update", updateParams, &ignored); err != nil {
-				return fmt.Errorf("host.update (templates): %w", err)
-			}
-		}
-	}
-	return nil
+	return result.HostIDs[0], nil
 }
 
 func (c *Client) HostGetByID(ctx context.Context, hostID string) (*Host, error) {

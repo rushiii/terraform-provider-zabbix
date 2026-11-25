@@ -140,31 +140,38 @@ func TestInterfacesForHostUpdateDistinctIDs(t *testing.T) {
 	}
 }
 
-// A host created with only SNMP interfaces is deleted again if setting up its interfaces fails.
-func TestSNMPHostCreateRollback(t *testing.T) {
+// A host with only SNMP interfaces is created by a single host.create carrying its interfaces
+// and templates: Zabbix 8.0 no longer has hostinterface.create/delete.
+func TestSNMPOnlyHostCreate(t *testing.T) {
 	srv, rec := newScriptedServer(t, func(call recordedCall) (any, string) {
-		switch call.Method {
-		case "host.create":
+		if strings.HasPrefix(call.Method, "hostinterface.") {
+			return nil, "Method not found."
+		}
+		if call.Method == "host.create" {
 			return map[string]any{"hostids": []string{"42"}}, ""
-		case "host.get":
-			return []any{map[string]any{"hostid": "42", "host": "h", "interfaces": []any{map[string]any{"interfaceid": "7", "type": "1", "main": "1", "useip": "1"}}}}, ""
-		case "hostinterface.create":
-			return nil, "Incorrect value for field \"community\"."
 		}
 		return map[string]any{}, ""
 	})
 	c := newTestClient(t, srv.URL, Auth{Method: AuthToken, Token: "t"})
-	_, err := c.HostCreate(context.Background(), HostCreateRequest{
-		Host:       "h",
-		GroupIDs:   []string{"2"},
-		Interfaces: []HostInterface{{Type: 2, Main: 1, UseIP: 1, IP: "10.0.0.1", Port: "161", Details: &SNMPDetails{Version: 2, Community: "x"}}},
+	id, err := c.HostCreate(context.Background(), HostCreateRequest{
+		Host:        "h",
+		GroupIDs:    []string{"2"},
+		TemplateIDs: []string{"30"},
+		Interfaces:  []HostInterface{{Type: 2, Main: 1, UseIP: 1, IP: "10.0.0.1", Port: "161", Details: &SNMPDetails{Version: 2, Community: "public"}}},
 	})
-	if err == nil || !strings.Contains(err.Error(), "hostinterface.create") {
-		t.Fatalf("expected hostinterface.create error, got %v", err)
+	if err != nil || id != "42" {
+		t.Fatalf("id=%q err=%v", id, err)
 	}
-	del := rec.last("host.delete")
-	if del.Method == "" {
-		t.Fatalf("host was not deleted after the failure: %v", rec.methods())
+	if m := rec.methods(); len(m) != 2 || m[1] != "host.create" {
+		t.Fatalf("calls = %v, want apiinfo.version + host.create only", m)
+	}
+	params := rec.last("host.create").Params
+	ifaces := params["interfaces"].([]any)
+	if len(ifaces) != 1 || ifaces[0].(map[string]any)["type"] != float64(2) || ifaces[0].(map[string]any)["details"] == nil {
+		t.Errorf("interfaces = %v", ifaces)
+	}
+	if tpls := params["templates"].([]any); len(tpls) != 1 {
+		t.Errorf("templates = %v", tpls)
 	}
 }
 

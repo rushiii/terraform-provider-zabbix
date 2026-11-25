@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.3.3
+
+### Zabbix 8.0
+
+- `zabbix_host`: creating a host with only SNMP interfaces failed on Zabbix 8.0 with
+  `hostinterface.delete (temp): Method not found`. Zabbix 8.0 removed the
+  `hostinterface.create` / `update` / `delete` methods, which the provider used to work around
+  an old `host.create` limitation. The host is now created with its SNMP interfaces and
+  templates in a single `host.create`, which works on Zabbix 6.0 to 8.0.
+
+### Tests
+
+- Acceptance test for a host with only an SNMP interface linked to a template with SNMP items.
+  The whole acceptance suite (15 tests) passes on Zabbix 7.0, 7.4 and 8.0.
+
 ## 1.3.2
 
 ### Bug fixes

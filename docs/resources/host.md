@@ -156,7 +156,7 @@ tofu import zabbix_host.name 12345
 
 ## Notes
 
-- During update, interfaces are replaced as a full set via
-  `hostinterface.replacehostinterfaces`.
+- Interfaces are sent with `host.create` / `host.update` (existing interfaces are updated in
+  place). Zabbix 8.0 no longer allows managing interfaces with `hostinterface.*` methods.
 - In practice, Zabbix usually requires at least one valid interface
   for a monitorable host.

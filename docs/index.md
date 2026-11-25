@@ -31,7 +31,7 @@ terraform {
   required_providers {
     zabbix = {
       source  = "rushiii/zabbix"
-      version = "1.3.2"
+      version = "1.3.3"
     }
   }
 }
@@ -101,6 +101,7 @@ concurrent requests, so the default parallelism of OpenTofu can be kept.
 Supported Zabbix versions: 6.0 LTS, 6.4, 7.0 LTS, 7.2, 7.4 and 8.0. The provider detects the server version and
 uses the matching API conventions (the `Authorization: Bearer` header from 6.4, `selectHostGroups` /
 `selectTemplateGroups` / `hostgroup_rights` from 6.2). Resource behavior is identical on every version.
+Zabbix 8.0 requires provider 1.3.3 or later for hosts with only SNMP interfaces.
 
 ## Configure-time validation
 
